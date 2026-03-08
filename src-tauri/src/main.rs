@@ -42,5 +42,5 @@ fn main() {
       sftp_set_permissions
     ])
     .run(tauri::generate_context!())
-    .expect("failed to run Castor SSH");
+    .expect("failed to run Castor");
 }

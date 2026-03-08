@@ -36,7 +36,7 @@ export function TerminalView({ sessionId, active }: TerminalViewProps) {
     terminal.loadAddon(fitAddon);
     terminal.open(rootElement);
     fitAddon.fit();
-    terminal.writeln(`Castor SSH session ${sessionId} ready.`);
+    terminal.writeln(`Castor session ${sessionId} ready.`);
 
     const viewportElement = rootElement.querySelector<HTMLElement>('.xterm-viewport');
     let hideScrollbarTimer: number | null = null;

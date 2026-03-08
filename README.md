@@ -1,4 +1,4 @@
-# Castor SSH Desktop (Tauri + Rust + React)
+# Castor Desktop (Tauri + Rust + React)
 
 SSH desktop MVP with:
 
