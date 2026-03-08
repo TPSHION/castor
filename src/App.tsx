@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { LocalActionDialog } from './components/LocalActionDialog';
@@ -66,9 +66,15 @@ import {
   parsePermissionInput,
   validateEditor
 } from './app/helpers';
+import { useContextMenuDismiss } from './app/hooks/useContextMenuDismiss';
+import { useScrollbarWidthVariable } from './app/hooks/useScrollbarWidthVariable';
+import { useSystemDropUploadQueue } from './app/hooks/useSystemDropUploadQueue';
+import { useTransferProgressManager } from './app/hooks/useTransferProgressManager';
 
 export function App() {
   const MIN_TRANSFER_PROGRESS_VISIBLE_MS = 600;
+  const localTransferManager = useTransferProgressManager({ minVisibleMs: MIN_TRANSFER_PROGRESS_VISIBLE_MS });
+  const sftpTransferManager = useTransferProgressManager({ minVisibleMs: MIN_TRANSFER_PROGRESS_VISIBLE_MS });
   const [contentView, setContentView] = useState<ContentView>('servers');
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [profilesBusy, setProfilesBusy] = useState(false);
@@ -94,14 +100,8 @@ export function App() {
   const [localUploadConflictRenameValue, setLocalUploadConflictRenameValue] = useState('');
   const [localUploadConflictError, setLocalUploadConflictError] = useState<string | null>(null);
   const [localActionError, setLocalActionError] = useState<string | null>(null);
-  const [localTransferProgresses, setLocalTransferProgresses] = useState<SftpTransferProgressPayload[]>([]);
-  const [localCompletedTransferProgresses, setLocalCompletedTransferProgresses] = useState<SftpTransferProgressPayload[]>([]);
-  const localTransferStartedAtRef = useRef<Record<string, number>>({});
-  const localTransferClearTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const localDismissedCompletedTransferIdsRef = useRef<Set<string>>(new Set());
-  const recentSystemDropRef = useRef<{ signature: string; at: number } | null>(null);
-  const pendingSystemUploadQueueRef = useRef<LocalFsEntry[]>([]);
-  const processingSystemUploadQueueRef = useRef(false);
+  const localTransferProgresses = localTransferManager.progresses;
+  const localCompletedTransferProgresses = localTransferManager.completed;
   const localContextMenuRef = useRef<HTMLDivElement>(null);
 
   const [selectedSftpProfileId, setSelectedSftpProfileId] = useState<string>('');
@@ -115,15 +115,18 @@ export function App() {
   const [sftpContextMenu, setSftpContextMenu] = useState<SftpContextMenuState | null>(null);
   const [sftpActionDialog, setSftpActionDialog] = useState<SftpActionDialogState>(null);
   const [sftpActionError, setSftpActionError] = useState<string | null>(null);
-  const [sftpTransferProgresses, setSftpTransferProgresses] = useState<SftpTransferProgressPayload[]>([]);
-  const [sftpCompletedTransferProgresses, setSftpCompletedTransferProgresses] = useState<SftpTransferProgressPayload[]>([]);
-  const sftpTransferStartedAtRef = useRef<Record<string, number>>({});
-  const sftpTransferClearTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const sftpDismissedCompletedTransferIdsRef = useRef<Set<string>>(new Set());
+  const sftpTransferProgresses = sftpTransferManager.progresses;
+  const sftpCompletedTransferProgresses = sftpTransferManager.completed;
   const sftpContextMenuRef = useRef<HTMLDivElement>(null);
 
   const [sessionTabs, setSessionTabs] = useState<SessionTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const closeLocalContextMenu = useCallback(() => setLocalContextMenu(null), []);
+  const closeSftpContextMenu = useCallback(() => setSftpContextMenu(null), []);
+
+  useScrollbarWidthVariable('--sftp-body-scrollbar-width');
+  useContextMenuDismiss(Boolean(localContextMenu), localContextMenuRef, closeLocalContextMenu);
+  useContextMenuDismiss(Boolean(sftpContextMenu), sftpContextMenuRef, closeSftpContextMenu);
 
   const activeTab = useMemo(
     () => sessionTabs.find((tab) => tab.id === activeTabId) ?? null,
@@ -181,174 +184,23 @@ export function App() {
     return parts[parts.length - 1] ?? normalized;
   }
 
-  function upsertTransferProgress(
-    list: SftpTransferProgressPayload[],
-    payload: SftpTransferProgressPayload
-  ): SftpTransferProgressPayload[] {
-    const index = list.findIndex((item) => item.transfer_id === payload.transfer_id);
-    if (index === -1) {
-      return [payload, ...list];
-    }
-    const next = [...list];
-    next[index] = payload;
-    return next;
-  }
-
-  function upsertCompletedTransferProgress(
-    list: SftpTransferProgressPayload[],
-    payload: SftpTransferProgressPayload
-  ): SftpTransferProgressPayload[] {
-    const filtered = list.filter((item) => item.transfer_id !== payload.transfer_id);
-    return [payload, ...filtered].slice(0, 100);
-  }
-
-  function clearLocalTransferTimer(transferId?: string) {
-    if (transferId) {
-      const timer = localTransferClearTimersRef.current[transferId];
-      if (timer) {
-        clearTimeout(timer);
-        delete localTransferClearTimersRef.current[transferId];
-      }
-      return;
-    }
-    Object.values(localTransferClearTimersRef.current).forEach((timer) => clearTimeout(timer));
-    localTransferClearTimersRef.current = {};
-  }
-
-  function clearSftpTransferTimer(transferId?: string) {
-    if (transferId) {
-      const timer = sftpTransferClearTimersRef.current[transferId];
-      if (timer) {
-        clearTimeout(timer);
-        delete sftpTransferClearTimersRef.current[transferId];
-      }
-      return;
-    }
-    Object.values(sftpTransferClearTimersRef.current).forEach((timer) => clearTimeout(timer));
-    sftpTransferClearTimersRef.current = {};
-  }
-
-  function withTransferMetrics(
-    payload: SftpTransferProgressPayload,
-    startedAt: number | null
-  ): SftpTransferProgressPayload {
-    if (payload.status === 'done') {
-      return { ...payload, eta_seconds: 0, speed_bps: null };
-    }
-
-    if (payload.status !== 'running' || startedAt === null || payload.transferred_bytes <= 0) {
-      return { ...payload, eta_seconds: null, speed_bps: null };
-    }
-
-    const elapsedSeconds = Math.max(0.001, (Date.now() - startedAt) / 1000);
-    const speedBps = payload.transferred_bytes / elapsedSeconds;
-    if (!Number.isFinite(speedBps) || speedBps <= 0) {
-      return { ...payload, eta_seconds: null, speed_bps: null };
-    }
-
-    if (payload.total_bytes > 0 && payload.total_bytes > payload.transferred_bytes) {
-      const remainingBytes = payload.total_bytes - payload.transferred_bytes;
-      return {
-        ...payload,
-        eta_seconds: Math.ceil(remainingBytes / speedBps),
-        speed_bps: speedBps
-      };
-    }
-
-    return { ...payload, eta_seconds: null, speed_bps: speedBps };
-  }
-
-  function applyLocalTransferProgress(payload: SftpTransferProgressPayload) {
-    const transferId = payload.transfer_id;
-    if (payload.status === 'running') {
-      localDismissedCompletedTransferIdsRef.current.delete(transferId);
-      clearLocalTransferTimer(transferId);
-      if (!localTransferStartedAtRef.current[transferId]) {
-        localTransferStartedAtRef.current[transferId] = Date.now();
-      }
-      const nextPayload = withTransferMetrics(payload, localTransferStartedAtRef.current[transferId]);
-      setLocalTransferProgresses((previous) => upsertTransferProgress(previous, nextPayload));
-      setLocalCompletedTransferProgresses((previous) => previous.filter((item) => item.transfer_id !== transferId));
-      return;
-    }
-
-    if (localDismissedCompletedTransferIdsRef.current.has(transferId)) {
-      setLocalTransferProgresses((previous) => previous.filter((item) => item.transfer_id !== transferId));
-      return;
-    }
-
-    const startedAt = localTransferStartedAtRef.current[transferId] ?? Date.now();
-    const nextPayload = withTransferMetrics(payload, startedAt);
-    setLocalTransferProgresses((previous) => upsertTransferProgress(previous, nextPayload));
-    setLocalCompletedTransferProgresses((previous) => upsertCompletedTransferProgress(previous, nextPayload));
-    const elapsed = Date.now() - startedAt;
-    const delay = Math.max(0, MIN_TRANSFER_PROGRESS_VISIBLE_MS - elapsed);
-    clearLocalTransferTimer(transferId);
-    localTransferClearTimersRef.current[transferId] = setTimeout(() => {
-      setLocalTransferProgresses((previous) => previous.filter((item) => item.transfer_id !== transferId));
-      delete localTransferStartedAtRef.current[transferId];
-      delete localTransferClearTimersRef.current[transferId];
-    }, delay);
-  }
-
-  function applySftpTransferProgress(payload: SftpTransferProgressPayload) {
-    const transferId = payload.transfer_id;
-    if (payload.status === 'running') {
-      sftpDismissedCompletedTransferIdsRef.current.delete(transferId);
-      clearSftpTransferTimer(transferId);
-      if (!sftpTransferStartedAtRef.current[transferId]) {
-        sftpTransferStartedAtRef.current[transferId] = Date.now();
-      }
-      const nextPayload = withTransferMetrics(payload, sftpTransferStartedAtRef.current[transferId]);
-      setSftpTransferProgresses((previous) => upsertTransferProgress(previous, nextPayload));
-      setSftpCompletedTransferProgresses((previous) => previous.filter((item) => item.transfer_id !== transferId));
-      return;
-    }
-
-    if (sftpDismissedCompletedTransferIdsRef.current.has(transferId)) {
-      setSftpTransferProgresses((previous) => previous.filter((item) => item.transfer_id !== transferId));
-      return;
-    }
-
-    const startedAt = sftpTransferStartedAtRef.current[transferId] ?? Date.now();
-    const nextPayload = withTransferMetrics(payload, startedAt);
-    setSftpTransferProgresses((previous) => upsertTransferProgress(previous, nextPayload));
-    setSftpCompletedTransferProgresses((previous) => upsertCompletedTransferProgress(previous, nextPayload));
-    const elapsed = Date.now() - startedAt;
-    const delay = Math.max(0, MIN_TRANSFER_PROGRESS_VISIBLE_MS - elapsed);
-    clearSftpTransferTimer(transferId);
-    sftpTransferClearTimersRef.current[transferId] = setTimeout(() => {
-      setSftpTransferProgresses((previous) => previous.filter((item) => item.transfer_id !== transferId));
-      delete sftpTransferStartedAtRef.current[transferId];
-      delete sftpTransferClearTimersRef.current[transferId];
-    }, delay);
-  }
+  const systemDropUploadQueue = useSystemDropUploadQueue({
+    connectedSftpProfile,
+    sftpEntries,
+    sftpPath,
+    localUploadConflictDialog,
+    setLocalMessage,
+    setLocalUploadConflictRenameValue,
+    setLocalUploadConflictError,
+    setLocalUploadConflictDialog,
+    onClearLocalContextMenu: closeLocalContextMenu,
+    suggestRemoteName,
+    localNameFromPath,
+    uploadSystemPathToTarget
+  });
 
   useEffect(() => {
     void refreshProfiles();
-  }, []);
-
-  useEffect(() => {
-    const updateSftpScrollbarWidth = () => {
-      const probe = document.createElement('div');
-      probe.style.width = '120px';
-      probe.style.height = '120px';
-      probe.style.overflow = 'scroll';
-      probe.style.position = 'absolute';
-      probe.style.top = '-9999px';
-      probe.style.left = '-9999px';
-      probe.style.visibility = 'hidden';
-      document.body.appendChild(probe);
-      const scrollbarWidth = probe.offsetWidth - probe.clientWidth;
-      document.body.removeChild(probe);
-      document.documentElement.style.setProperty('--sftp-body-scrollbar-width', `${Math.max(0, scrollbarWidth)}px`);
-    };
-
-    updateSftpScrollbarWidth();
-    window.addEventListener('resize', updateSftpScrollbarWidth);
-    return () => {
-      window.removeEventListener('resize', updateSftpScrollbarWidth);
-    };
   }, []);
 
   useEffect(() => {
@@ -364,16 +216,9 @@ export function App() {
       setLocalUploadConflictDialog(null);
       setLocalUploadConflictRenameValue('');
       setLocalUploadConflictError(null);
-      pendingSystemUploadQueueRef.current = [];
-      processingSystemUploadQueueRef.current = false;
-      clearLocalTransferTimer();
-      clearSftpTransferTimer();
-      localTransferStartedAtRef.current = {};
-      sftpTransferStartedAtRef.current = {};
-      setLocalTransferProgresses([]);
-      setSftpTransferProgresses([]);
-      setLocalCompletedTransferProgresses([]);
-      setSftpCompletedTransferProgresses([]);
+      systemDropUploadQueue.resetSystemQueue();
+      localTransferManager.reset();
+      sftpTransferManager.reset();
       return;
     }
 
@@ -391,12 +236,8 @@ export function App() {
       setLocalUploadConflictDialog(null);
       setLocalUploadConflictRenameValue('');
       setLocalUploadConflictError(null);
-      pendingSystemUploadQueueRef.current = [];
-      processingSystemUploadQueueRef.current = false;
-      clearSftpTransferTimer();
-      sftpTransferStartedAtRef.current = {};
-      setSftpTransferProgresses([]);
-      setSftpCompletedTransferProgresses([]);
+      systemDropUploadQueue.resetSystemQueue();
+      sftpTransferManager.reset();
       setSftpMessage('当前远程连接服务器已不存在，请重新选择。');
     }
   }, [profiles, selectedSftpProfileId, connectedSftpProfileId]);
@@ -428,76 +269,6 @@ export function App() {
     setLocalUploadConflictRenameValue('');
     setLocalUploadConflictError(null);
   }, [contentView]);
-
-  useEffect(() => {
-    if (!localContextMenu) {
-      return;
-    }
-
-    const onMouseDown = (event: MouseEvent) => {
-      if (localContextMenuRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      setLocalContextMenu(null);
-    };
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setLocalContextMenu(null);
-      }
-    };
-
-    const onViewportChange = () => {
-      setLocalContextMenu(null);
-    };
-
-    window.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('resize', onViewportChange);
-    window.addEventListener('scroll', onViewportChange, true);
-
-    return () => {
-      window.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('resize', onViewportChange);
-      window.removeEventListener('scroll', onViewportChange, true);
-    };
-  }, [localContextMenu]);
-
-  useEffect(() => {
-    if (!sftpContextMenu) {
-      return;
-    }
-
-    const onMouseDown = (event: MouseEvent) => {
-      if (sftpContextMenuRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      setSftpContextMenu(null);
-    };
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setSftpContextMenu(null);
-      }
-    };
-
-    const onViewportChange = () => {
-      setSftpContextMenu(null);
-    };
-
-    window.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('resize', onViewportChange);
-    window.addEventListener('scroll', onViewportChange, true);
-
-    return () => {
-      window.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('resize', onViewportChange);
-      window.removeEventListener('scroll', onViewportChange, true);
-    };
-  }, [sftpContextMenu]);
 
   useEffect(() => {
     let mounted = true;
@@ -542,14 +313,6 @@ export function App() {
     };
   }, []);
 
-  useEffect(
-    () => () => {
-      clearLocalTransferTimer();
-      clearSftpTransferTimer();
-    },
-    []
-  );
-
   useEffect(() => {
     let mounted = true;
 
@@ -559,18 +322,18 @@ export function App() {
       }
 
       if (event.payload.direction === 'upload') {
-        applyLocalTransferProgress(event.payload);
+        localTransferManager.applyProgress(event.payload);
         return;
       }
 
-      applySftpTransferProgress(event.payload);
+      sftpTransferManager.applyProgress(event.payload);
     });
 
     return () => {
       mounted = false;
       void unsubscribePromise.then((unlisten) => unlisten());
     };
-  }, []);
+  }, [localTransferManager.applyProgress, sftpTransferManager.applyProgress]);
 
   async function refreshProfiles() {
     setProfilesBusy(true);
@@ -660,7 +423,7 @@ export function App() {
     setLocalUploadConflictRenameValue('');
     setLocalUploadConflictError(null);
     if (fromSystemQueue) {
-      void processPendingSystemUploads();
+      systemDropUploadQueue.continueSystemQueue();
     }
   }
 
@@ -786,9 +549,8 @@ export function App() {
     setLocalUploadConflictDialog(null);
     setLocalSelectedPath(entry.path);
     const transferId = createTransferId();
-    clearLocalTransferTimer(transferId);
-    localTransferStartedAtRef.current[transferId] = Date.now();
-    applyLocalTransferProgress({
+    localTransferManager.markStarted(transferId);
+    localTransferManager.applyProgress({
       transfer_id: transferId,
       direction: 'upload',
       status: 'running',
@@ -823,7 +585,7 @@ export function App() {
       const message = formatInvokeError(invokeError);
       setLocalMessage(message);
       if (!message.includes('已取消')) {
-        applyLocalTransferProgress({
+        localTransferManager.applyProgress({
           transfer_id: transferId,
           direction: 'upload',
           status: 'error',
@@ -855,9 +617,8 @@ export function App() {
     }
 
     const transferId = createTransferId();
-    clearLocalTransferTimer(transferId);
-    localTransferStartedAtRef.current[transferId] = Date.now();
-    applyLocalTransferProgress({
+    localTransferManager.markStarted(transferId);
+    localTransferManager.applyProgress({
       transfer_id: transferId,
       direction: 'upload',
       status: 'running',
@@ -893,7 +654,7 @@ export function App() {
       const message = formatInvokeError(invokeError);
       setLocalMessage(message);
       if (!message.includes('已取消')) {
-        applyLocalTransferProgress({
+        localTransferManager.applyProgress({
           transfer_id: transferId,
           direction: 'upload',
           status: 'error',
@@ -907,82 +668,8 @@ export function App() {
     }
   }
 
-  async function processPendingSystemUploads() {
-    if (processingSystemUploadQueueRef.current || localUploadConflictDialog) {
-      return;
-    }
-    processingSystemUploadQueueRef.current = true;
-
-    try {
-      while (pendingSystemUploadQueueRef.current.length > 0) {
-        const entry = pendingSystemUploadQueueRef.current.shift();
-        if (!entry) {
-          continue;
-        }
-
-        const conflict = sftpEntries.find((item) => item.name === entry.name) ?? null;
-        if (conflict) {
-          setLocalContextMenu(null);
-          setLocalUploadConflictRenameValue(suggestRemoteName(entry.name));
-          setLocalUploadConflictError(null);
-          setLocalUploadConflictDialog({
-            localEntry: entry,
-            remoteEntry: conflict,
-            remoteDir: sftpPath,
-            source: 'system'
-          });
-          setLocalMessage('目标目录存在同名项，请选择上传策略。');
-          return;
-        }
-
-        await uploadSystemPathToTarget(entry.path);
-      }
-    } finally {
-      processingSystemUploadQueueRef.current = false;
-    }
-  }
-
   function onUploadSystemPathsToRemote(paths: string[]) {
-    if (!connectedSftpProfile) {
-      setLocalMessage('请先连接服务器。');
-      return;
-    }
-
-    const uniquePaths = Array.from(
-      new Set(
-        paths
-          .map((value) => value.trim())
-          .filter((value) => value.length > 0)
-      )
-    );
-    if (uniquePaths.length === 0) {
-      return;
-    }
-
-    const signature = uniquePaths.join('\n');
-    const now = Date.now();
-    if (recentSystemDropRef.current && recentSystemDropRef.current.signature === signature && now - recentSystemDropRef.current.at < 1200) {
-      return;
-    }
-    recentSystemDropRef.current = { signature, at: now };
-
-    const entries: LocalFsEntry[] = uniquePaths
-      .map((path) => {
-        const name = localNameFromPath(path);
-        return {
-          name,
-          path,
-          is_dir: false
-        };
-      })
-      .filter((entry) => entry.name.length > 0);
-    if (entries.length === 0) {
-      return;
-    }
-
-    pendingSystemUploadQueueRef.current.push(...entries);
-    setLocalMessage(`已接收 ${entries.length} 个系统拖拽项，正在上传到目标目录...`);
-    void processPendingSystemUploads();
+    systemDropUploadQueue.enqueueSystemPaths(paths);
   }
 
   async function onLocalCopyToTarget(entry: LocalFsEntry) {
@@ -1017,7 +704,7 @@ export function App() {
     setLocalUploadConflictError(null);
     await uploadLocalToTarget(dialog.localEntry, strategy);
     if (dialog.source === 'system') {
-      void processPendingSystemUploads();
+      systemDropUploadQueue.continueSystemQueue();
     }
   }
 
@@ -1044,7 +731,7 @@ export function App() {
     setLocalUploadConflictError(null);
     await uploadLocalToTarget(dialog.localEntry, 'auto_rename', nextName);
     if (dialog.source === 'system') {
-      void processPendingSystemUploads();
+      systemDropUploadQueue.continueSystemQueue();
     }
   }
 
@@ -1138,8 +825,7 @@ export function App() {
   function onSelectSftpProfile(profileId: string) {
     setSelectedSftpProfileId(profileId);
     if (connectedSftpProfileId && connectedSftpProfileId !== profileId) {
-      pendingSystemUploadQueueRef.current = [];
-      processingSystemUploadQueueRef.current = false;
+      systemDropUploadQueue.resetSystemQueue();
       setConnectedSftpProfileId('');
       setSftpEntries([]);
       setSftpPath('/root');
@@ -1200,9 +886,8 @@ export function App() {
 
     const transferId = createTransferId();
     request.transfer_id = transferId;
-    clearSftpTransferTimer(transferId);
-    sftpTransferStartedAtRef.current[transferId] = Date.now();
-    applySftpTransferProgress({
+    sftpTransferManager.markStarted(transferId);
+    sftpTransferManager.applyProgress({
       transfer_id: transferId,
       direction: 'download',
       status: 'running',
@@ -1221,7 +906,7 @@ export function App() {
       const message = formatInvokeError(invokeError);
       setSftpMessage(message);
       if (!message.includes('已取消')) {
-        applySftpTransferProgress({
+        sftpTransferManager.applyProgress({
           transfer_id: transferId,
           direction: 'download',
           status: 'error',
@@ -1290,9 +975,8 @@ export function App() {
     setSftpContextMenu(null);
     setSftpSelectedPath(entry.path);
     const transferId = createTransferId();
-    clearSftpTransferTimer(transferId);
-    sftpTransferStartedAtRef.current[transferId] = Date.now();
-    applySftpTransferProgress({
+    sftpTransferManager.markStarted(transferId);
+    sftpTransferManager.applyProgress({
       transfer_id: transferId,
       direction: 'download',
       status: 'running',
@@ -1327,7 +1011,7 @@ export function App() {
       const message = formatInvokeError(invokeError);
       setSftpMessage(message);
       if (!message.includes('已取消')) {
-        applySftpTransferProgress({
+        sftpTransferManager.applyProgress({
           transfer_id: transferId,
           direction: 'download',
           status: 'error',
@@ -1543,8 +1227,7 @@ export function App() {
     if (!connectedSftpProfile) {
       return;
     }
-    pendingSystemUploadQueueRef.current = [];
-    processingSystemUploadQueueRef.current = false;
+    systemDropUploadQueue.resetSystemQueue();
     const name = connectedSftpProfile.name;
     setConnectedSftpProfileId('');
     setSftpEntries([]);
@@ -1554,37 +1237,16 @@ export function App() {
     setSftpContextMenu(null);
     setSftpActionDialog(null);
     setSftpActionError(null);
-    clearSftpTransferTimer();
-    sftpTransferStartedAtRef.current = {};
-    setSftpTransferProgresses([]);
-    setSftpCompletedTransferProgresses([]);
+    sftpTransferManager.reset();
     setSftpMessage(`已关闭与 ${name} 的 SFTP 连接`);
   }
 
   function clearLocalCompletedTransfers() {
-    const completedIds = localCompletedTransferProgresses.map((task) => task.transfer_id);
-    completedIds.forEach((id) => {
-      localDismissedCompletedTransferIdsRef.current.add(id);
-      clearLocalTransferTimer(id);
-      delete localTransferStartedAtRef.current[id];
-    });
-    if (completedIds.length > 0) {
-      setLocalTransferProgresses((previous) => previous.filter((item) => !completedIds.includes(item.transfer_id)));
-    }
-    setLocalCompletedTransferProgresses([]);
+    localTransferManager.clearCompleted();
   }
 
   function clearSftpCompletedTransfers() {
-    const completedIds = sftpCompletedTransferProgresses.map((task) => task.transfer_id);
-    completedIds.forEach((id) => {
-      sftpDismissedCompletedTransferIdsRef.current.add(id);
-      clearSftpTransferTimer(id);
-      delete sftpTransferStartedAtRef.current[id];
-    });
-    if (completedIds.length > 0) {
-      setSftpTransferProgresses((previous) => previous.filter((item) => !completedIds.includes(item.transfer_id)));
-    }
-    setSftpCompletedTransferProgresses([]);
+    sftpTransferManager.clearCompleted();
   }
 
   function openCreateEditor() {
