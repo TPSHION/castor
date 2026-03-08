@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ConnectionProfile, LocalFsEntry, SftpEntry, SftpTransferProgressPayload } from '../types';
 import { TransferTasksPanelModal } from './TransferTasksPanelModal';
 
@@ -49,6 +49,8 @@ type SftpViewProps = {
   onCancelDownload: (transferId: string) => void;
   onClearLocalCompletedTransfers: () => void;
   onClearSftpCompletedTransfers: () => void;
+  onUploadLocalEntryToRemote: (entry: LocalFsEntry) => void;
+  onDownloadRemoteEntryToLocal: (entry: SftpEntry) => void;
 };
 
 export function SftpView({
@@ -97,10 +99,141 @@ export function SftpView({
   onCancelUpload,
   onCancelDownload,
   onClearLocalCompletedTransfers,
-  onClearSftpCompletedTransfers
+  onClearSftpCompletedTransfers,
+  onUploadLocalEntryToRemote,
+  onDownloadRemoteEntryToLocal
 }: SftpViewProps) {
   const [isLocalTasksPanelOpen, setLocalTasksPanelOpen] = useState(false);
   const [isSftpTasksPanelOpen, setSftpTasksPanelOpen] = useState(false);
+  const [isLocalDropActive, setLocalDropActive] = useState(false);
+  const [isRemoteDropActive, setRemoteDropActive] = useState(false);
+  const [isDragInteractionActive, setDragInteractionActive] = useState(false);
+  const [dragPayload, setDragPayload] = useState<{ source: 'local' | 'remote'; path: string; name: string } | null>(null);
+  const [dragPointer, setDragPointer] = useState<{ x: number; y: number } | null>(null);
+  const dragStartRef = useRef<{
+    source: 'local' | 'remote';
+    path: string;
+    name: string;
+    startX: number;
+    startY: number;
+  } | null>(null);
+  const localDropZoneRef = useRef<HTMLDivElement>(null);
+  const remoteDropZoneRef = useRef<HTMLDivElement>(null);
+
+  const isPointInElement = (element: HTMLDivElement | null, x: number, y: number) => {
+    if (!element) {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  };
+
+  const updateDropState = (source: 'local' | 'remote', x: number, y: number) => {
+    if (source === 'local') {
+      setLocalDropActive(false);
+      setRemoteDropActive(isPointInElement(remoteDropZoneRef.current, x, y));
+      return;
+    }
+    setRemoteDropActive(false);
+    setLocalDropActive(isPointInElement(localDropZoneRef.current, x, y));
+  };
+
+  const clearDragState = () => {
+    dragStartRef.current = null;
+    setDragInteractionActive(false);
+    setDragPayload(null);
+    setDragPointer(null);
+    setLocalDropActive(false);
+    setRemoteDropActive(false);
+  };
+
+  const startDragCandidate = (
+    event: React.MouseEvent,
+    payload: { source: 'local' | 'remote'; path: string; name: string }
+  ) => {
+    if (event.button !== 0) {
+      return;
+    }
+    dragStartRef.current = {
+      ...payload,
+      startX: event.clientX,
+      startY: event.clientY
+    };
+    setDragInteractionActive(true);
+  };
+
+  useEffect(() => {
+    const onMouseMove = (event: MouseEvent) => {
+      if (!dragPayload) {
+        const candidate = dragStartRef.current;
+        if (!candidate) {
+          return;
+        }
+        const distance = Math.hypot(event.clientX - candidate.startX, event.clientY - candidate.startY);
+        if (distance < 6) {
+          return;
+        }
+        const nextPayload = {
+          source: candidate.source,
+          path: candidate.path,
+          name: candidate.name
+        };
+        setDragPayload(nextPayload);
+        setDragPointer({ x: event.clientX, y: event.clientY });
+        updateDropState(nextPayload.source, event.clientX, event.clientY);
+        return;
+      }
+
+      setDragPointer({ x: event.clientX, y: event.clientY });
+      updateDropState(dragPayload.source, event.clientX, event.clientY);
+    };
+
+    const onMouseUp = (event: MouseEvent) => {
+      if (!dragPayload) {
+        dragStartRef.current = null;
+        setDragInteractionActive(false);
+        return;
+      }
+
+      if (
+        dragPayload.source === 'local' &&
+        isPointInElement(remoteDropZoneRef.current, event.clientX, event.clientY)
+      ) {
+        const entry = localEntries.find((item) => item.path === dragPayload.path);
+        if (entry) {
+          onUploadLocalEntryToRemote(entry);
+        }
+      } else if (
+        dragPayload.source === 'remote' &&
+        isPointInElement(localDropZoneRef.current, event.clientX, event.clientY)
+      ) {
+        const entry = sftpEntries.find((item) => item.path === dragPayload.path);
+        if (entry) {
+          onDownloadRemoteEntryToLocal(entry);
+        }
+      }
+
+      clearDragState();
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [dragPayload, localEntries, onDownloadRemoteEntryToLocal, onUploadLocalEntryToRemote, sftpEntries]);
+
+  useEffect(() => {
+    if (!isDragInteractionActive) {
+      document.body.classList.remove('sftp-transfer-dragging');
+      return;
+    }
+    document.body.classList.add('sftp-transfer-dragging');
+    return () => {
+      document.body.classList.remove('sftp-transfer-dragging');
+    };
+  }, [isDragInteractionActive]);
 
   const formatEta = (value?: number | null) => {
     if (value === null || value === undefined || !Number.isFinite(value)) {
@@ -246,7 +379,8 @@ export function SftpView({
           </div>
 
           <div
-            className="sftp-table-wrap"
+            ref={localDropZoneRef}
+            className={isLocalDropActive ? 'sftp-table-wrap drag-over' : 'sftp-table-wrap'}
             onContextMenu={(event) => {
               if (!localPath) {
                 return;
@@ -322,7 +456,16 @@ export function SftpView({
                       }}
                     >
                       <td>
-                        <div className="entry-name-cell">
+                        <div
+                          className="entry-name-cell drag-source"
+                          onMouseDown={(event) => {
+                            startDragCandidate(event, {
+                              source: 'local',
+                              path: entry.path,
+                              name: entry.name
+                            });
+                          }}
+                        >
                           <span className={entry.is_dir ? 'entry-icon dir' : 'entry-icon file'} aria-hidden="true" />
                           <span>{entry.name}</span>
                         </div>
@@ -423,7 +566,8 @@ export function SftpView({
             </div>
 
             <div
-              className="sftp-table-wrap"
+              ref={remoteDropZoneRef}
+              className={isRemoteDropActive ? 'sftp-table-wrap drag-over' : 'sftp-table-wrap'}
               onContextMenu={(event) => {
                 if (!connectedSftpProfile) {
                   return;
@@ -501,7 +645,16 @@ export function SftpView({
                         }}
                       >
                         <td>
-                          <div className="entry-name-cell">
+                          <div
+                            className="entry-name-cell drag-source"
+                            onMouseDown={(event) => {
+                              startDragCandidate(event, {
+                                source: 'remote',
+                                path: entry.path,
+                                name: entry.name
+                              });
+                            }}
+                          >
                             <span className={entry.is_dir ? 'entry-icon dir' : 'entry-icon file'} aria-hidden="true" />
                             <span>{entry.name}</span>
                           </div>
@@ -518,6 +671,21 @@ export function SftpView({
           </div>
         )}
       </section>
+
+      {dragPayload && dragPointer && (
+        <div
+          className="sftp-manual-drag-ghost"
+          style={{
+            left: dragPointer.x + 14,
+            top: dragPointer.y + 14
+          }}
+        >
+          <span className="sftp-manual-drag-label">{dragPayload.source === 'local' ? '上传到 Remote' : '下载到 Local'}</span>
+          <span className="sftp-manual-drag-name" title={dragPayload.name}>
+            {dragPayload.name}
+          </span>
+        </div>
+      )}
 
       <TransferTasksPanelModal
         isOpen={isLocalTasksPanelOpen}

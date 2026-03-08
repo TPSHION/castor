@@ -1741,6 +1741,8 @@ export function App() {
             onCancelDownload={(transferId) => void onCancelSftpDownload(transferId)}
             onClearLocalCompletedTransfers={clearLocalCompletedTransfers}
             onClearSftpCompletedTransfers={clearSftpCompletedTransfers}
+            onUploadLocalEntryToRemote={(entry) => void onLocalCopyToTarget(entry)}
+            onDownloadRemoteEntryToLocal={(entry) => void onSftpCopyToTarget(entry)}
           />
         </div>
         <div className={contentView === 'workspace' ? 'view-page workspace-page' : 'view-page workspace-page hidden'}>
