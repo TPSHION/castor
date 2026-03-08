@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { LocalActionDialog } from './components/LocalActionDialog';
 import { LocalContextMenu } from './components/LocalContextMenu';
 import { LocalUploadConflictDialog } from './components/LocalUploadConflictDialog';
@@ -201,6 +202,54 @@ export function App() {
 
   useEffect(() => {
     void refreshProfiles();
+  }, []);
+
+  useEffect(() => {
+    const isMacOs = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+    document.body.classList.toggle('window-titlebar-overlay', isMacOs);
+    if (!isMacOs) {
+      return () => {
+        document.body.classList.remove('window-titlebar-overlay');
+        document.body.classList.remove('window-fullscreen');
+      };
+    }
+
+    const appWindow = getCurrentWindow();
+    let disposed = false;
+    let unlistenResize: (() => void) | null = null;
+
+    const syncFullscreenState = async () => {
+      try {
+        const isFullscreen = await appWindow.isFullscreen();
+        if (!disposed) {
+          document.body.classList.toggle('window-fullscreen', isFullscreen);
+        }
+      } catch {
+        if (!disposed) {
+          document.body.classList.remove('window-fullscreen');
+        }
+      }
+    };
+
+    void syncFullscreenState();
+    void appWindow.onResized(() => {
+      void syncFullscreenState();
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+        return;
+      }
+      unlistenResize = unlisten;
+    });
+
+    return () => {
+      disposed = true;
+      if (unlistenResize) {
+        unlistenResize();
+      }
+      document.body.classList.remove('window-titlebar-overlay');
+      document.body.classList.remove('window-fullscreen');
+    };
   }, []);
 
   useEffect(() => {
@@ -1541,6 +1590,24 @@ export function App() {
     await onConnectProfile(profile);
   }
 
+  const onHeaderMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (!target) {
+      return;
+    }
+    if (target.closest('button, input, select, textarea, a, [role="button"], [data-no-window-drag="true"]')) {
+      return;
+    }
+    const selection = window.getSelection?.();
+    if (selection && !selection.isCollapsed) {
+      selection.removeAllRanges();
+    }
+    void getCurrentWindow().startDragging().catch(() => {});
+  }, []);
+
   function renderBody() {
     const connectedCount = sessionTabs.filter((item) => item.status === 'connected').length;
 
@@ -1642,7 +1709,7 @@ export function App() {
 
   return (
     <main className="window-shell">
-      <header className="window-header">
+      <header className="window-header" data-tauri-drag-region onMouseDownCapture={onHeaderMouseDownCapture}>
         <div className="header-functions">
           <button
             type="button"
@@ -1694,6 +1761,13 @@ export function App() {
             </button>
           ))}
         </div>
+
+        <div
+          className="header-drag-handle"
+          data-tauri-drag-region
+          aria-hidden="true"
+          onMouseDown={onHeaderMouseDownCapture}
+        />
 
         <div className="header-actions">
           {contentView === 'workspace' && activeTab && (

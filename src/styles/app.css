@@ -14,6 +14,8 @@
   --radius: 12px;
   --dir-panel-height: 520px;
   --sftp-body-scrollbar-width: 0px;
+  --mac-titlebar-left-inset: 86px;
+  --mac-titlebar-top-offset: 2px;
   font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
 }
 
@@ -50,19 +52,49 @@ body.sftp-transfer-dragging {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 8px 10px;
   background: var(--header-bg);
   border-bottom: 1px solid var(--header-border);
   min-width: 0;
   overflow: hidden;
+  position: relative;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-app-region: drag;
+}
+
+.header-drag-region {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.window-header > :not(.header-drag-region) {
+  position: relative;
+  z-index: 1;
+}
+
+body.window-titlebar-overlay .window-header {
+  padding-top: var(--mac-titlebar-top-offset);
+  padding-left: var(--mac-titlebar-left-inset);
+  padding-bottom: 2px;
+  min-height: 36px;
+}
+
+body.window-titlebar-overlay.window-fullscreen .window-header {
+  padding-left: 10px;
+}
+
+body.window-titlebar-overlay .header-functions {
+  margin-left: 4px;
 }
 
 .header-functions,
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
@@ -71,10 +103,10 @@ body.sftp-transfer-dragging {
   border: 1px solid #36446a;
   background: #26324d;
   color: #ccd4e4;
-  border-radius: 10px;
-  padding: 4px 10px;
-  font-size: 0.8rem;
-  line-height: 1.25;
+  border-radius: 9px;
+  padding: 3px 8px;
+  font-size: 0.78rem;
+  line-height: 1.2;
   cursor: default;
 }
 
@@ -88,7 +120,7 @@ body.sftp-transfer-dragging {
   border: 0;
   background: transparent;
   color: #bcc4d6;
-  font-size: 1.45rem;
+  font-size: 1.3rem;
   line-height: 1;
   cursor: default;
 }
@@ -99,7 +131,7 @@ body.sftp-transfer-dragging {
   max-width: 100%;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -107,18 +139,32 @@ body.sftp-transfer-dragging {
   padding-bottom: 0;
 }
 
+.window-header button,
+.window-header input,
+.window-header select,
+.window-header textarea,
+.window-header [role='button'] {
+  -webkit-app-region: no-drag;
+}
+
+.header-drag-handle {
+  flex: 0 0 28px;
+  align-self: stretch;
+  -webkit-app-region: drag;
+}
+
 .session-tab {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   border: 1px solid #3b527f;
-  border-radius: 10px;
+  border-radius: 9px;
   background: #1f2d4e;
   color: #d0dbef;
-  padding: 4px 8px;
-  min-width: 96px;
-  max-width: 210px;
-  font-size: 0.8rem;
+  padding: 3px 7px;
+  min-width: 84px;
+  max-width: 180px;
+  font-size: 0.78rem;
   cursor: default;
   flex-shrink: 0;
 }
@@ -130,8 +176,8 @@ body.sftp-transfer-dragging {
 }
 
 .dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
   background: #8a95ad;
   flex-shrink: 0;
@@ -159,7 +205,7 @@ body.sftp-transfer-dragging {
 
 .tab-close {
   color: #aeb7cb;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
   line-height: 1;
   flex-shrink: 0;
 }
@@ -1289,12 +1335,12 @@ button.danger {
 
   .header-pill,
   .header-action {
-    padding: 4px 8px;
+    padding: 3px 7px;
   }
 
   .session-tab {
-    min-width: 96px;
-    max-width: 180px;
+    min-width: 84px;
+    max-width: 160px;
   }
 
   .tab-title {
@@ -1345,8 +1391,7 @@ button.danger {
 
 .window-body,
 .editor-modal-body,
-.sftp-table tbody,
-.terminal-root .xterm-viewport {
+.sftp-table tbody {
   scrollbar-width: thin;
   scrollbar-color: #6e7c99 transparent;
 }
@@ -1359,8 +1404,7 @@ button.danger {
 
 .window-body::-webkit-scrollbar,
 .editor-modal-body::-webkit-scrollbar,
-.sftp-table tbody::-webkit-scrollbar,
-.terminal-root .xterm-viewport::-webkit-scrollbar {
+.sftp-table tbody::-webkit-scrollbar {
   width: 3px;
   height: 3px;
 }
@@ -1371,8 +1415,7 @@ button.danger {
 
 .window-body::-webkit-scrollbar-thumb,
 .editor-modal-body::-webkit-scrollbar-thumb,
-.sftp-table tbody::-webkit-scrollbar-thumb,
-.terminal-root .xterm-viewport::-webkit-scrollbar-thumb {
+.sftp-table tbody::-webkit-scrollbar-thumb {
   background: #6e7c99;
   border-radius: 999px;
 }
@@ -1380,7 +1423,35 @@ button.danger {
 .header-tabs::-webkit-scrollbar-track,
 .window-body::-webkit-scrollbar-track,
 .editor-modal-body::-webkit-scrollbar-track,
-.sftp-table tbody::-webkit-scrollbar-track,
-.terminal-root .xterm-viewport::-webkit-scrollbar-track {
+.sftp-table tbody::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-root .xterm-viewport {
+  scrollbar-width: none;
+  scrollbar-color: transparent transparent;
+}
+
+.terminal-root .xterm-viewport::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.terminal-root.terminal-scrolling .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: #6e7c99 transparent;
+}
+
+.terminal-root.terminal-scrolling .xterm-viewport::-webkit-scrollbar {
+  width: 2px;
+  height: 2px;
+}
+
+.terminal-root.terminal-scrolling .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #6e7c99;
+  border-radius: 999px;
+}
+
+.terminal-root.terminal-scrolling .xterm-viewport::-webkit-scrollbar-track {
   background: transparent;
 }

@@ -19,6 +19,7 @@ export function TerminalView({ sessionId, active }: TerminalViewProps) {
     if (!rootRef.current || termRef.current) {
       return;
     }
+    const rootElement = rootRef.current;
 
     const terminal = new Terminal({
       convertEol: true,
@@ -33,9 +34,25 @@ export function TerminalView({ sessionId, active }: TerminalViewProps) {
 
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
-    terminal.open(rootRef.current);
+    terminal.open(rootElement);
     fitAddon.fit();
     terminal.writeln(`Castor SSH session ${sessionId} ready.`);
+
+    const viewportElement = rootElement.querySelector<HTMLElement>('.xterm-viewport');
+    let hideScrollbarTimer: number | null = null;
+    const onViewportScroll = () => {
+      rootElement.classList.add('terminal-scrolling');
+      if (hideScrollbarTimer !== null) {
+        window.clearTimeout(hideScrollbarTimer);
+      }
+      hideScrollbarTimer = window.setTimeout(() => {
+        rootElement.classList.remove('terminal-scrolling');
+        hideScrollbarTimer = null;
+      }, 450);
+    };
+    if (viewportElement) {
+      viewportElement.addEventListener('scroll', onViewportScroll, { passive: true });
+    }
 
     const unlistenData = terminal.onData((data) => {
       const payload: SendInputRequest = {
@@ -69,6 +86,13 @@ export function TerminalView({ sessionId, active }: TerminalViewProps) {
     return () => {
       unlistenData.dispose();
       window.removeEventListener('resize', onWindowResize);
+      if (viewportElement) {
+        viewportElement.removeEventListener('scroll', onViewportScroll);
+      }
+      if (hideScrollbarTimer !== null) {
+        window.clearTimeout(hideScrollbarTimer);
+      }
+      rootElement.classList.remove('terminal-scrolling');
       termRef.current?.dispose();
       termRef.current = null;
       fitRef.current = null;
