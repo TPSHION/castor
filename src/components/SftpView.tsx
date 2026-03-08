@@ -605,6 +605,7 @@ export function SftpView({
           <h2>Remote (SFTP)</h2>
           <div className="section-actions">
             <select
+              className="sftp-profile-select"
               value={selectedSftpProfileId}
               onChange={(event) => onSelectSftpProfile(event.target.value)}
               disabled={profiles.length === 0 || sftpBusy}

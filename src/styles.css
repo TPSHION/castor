@@ -620,6 +620,11 @@ button {
   cursor: default;
 }
 
+.sftp-profile-select {
+  font-size: 0.82rem;
+  line-height: 1.25;
+}
+
 button:disabled {
   opacity: 0.6;
   cursor: default;
