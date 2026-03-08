@@ -5,10 +5,10 @@ mod sftp;
 mod ssh;
 
 use commands::{
-  connect_local_terminal, connect_ssh, delete_connection_profile, disconnect_ssh,
+  cancel_sftp_transfer, connect_local_terminal, connect_ssh, delete_connection_profile, disconnect_ssh,
   list_connection_profiles, list_local_dir, list_sessions, local_create_dir, local_delete_entry,
   local_rename_entry, resize_ssh, send_ssh_input, sftp_create_dir, sftp_delete_entry,
-  sftp_download_file, sftp_list_dir, sftp_rename_entry, sftp_set_permissions,
+  sftp_download_file, sftp_list_dir, sftp_rename_entry, sftp_set_permissions, sftp_upload_path,
   test_ssh_connection,
   upsert_connection_profile
 };
@@ -30,6 +30,8 @@ fn main() {
       delete_connection_profile,
       sftp_list_dir,
       sftp_download_file,
+      sftp_upload_path,
+      cancel_sftp_transfer,
       list_local_dir,
       local_rename_entry,
       local_delete_entry,

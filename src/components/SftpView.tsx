@@ -1,4 +1,4 @@
-import type { ConnectionProfile, LocalFsEntry, SftpEntry } from '../types';
+import type { ConnectionProfile, LocalFsEntry, SftpEntry, SftpTransferProgressPayload } from '../types';
 
 type SftpViewProps = {
   profiles: ConnectionProfile[];
@@ -18,6 +18,8 @@ type SftpViewProps = {
   localBusy: boolean;
   localMessage: string | null;
   localSelectedPath: string | null;
+  localTransferProgress: SftpTransferProgressPayload | null;
+  sftpTransferProgress: SftpTransferProgressPayload | null;
   formatBytes: (value?: number) => string;
   formatUnixTime: (value?: number) => string;
   onSelectSftpProfile: (profileId: string) => void;
@@ -39,6 +41,8 @@ type SftpViewProps = {
   onLocalSelectPath: (path: string) => void;
   onOpenLocalContextMenu: (x: number, y: number, entry: LocalFsEntry | null) => void;
   onOpenCreateEditor: () => void;
+  canCancelDownload: boolean;
+  onCancelDownload: () => void;
 };
 
 export function SftpView({
@@ -59,6 +63,8 @@ export function SftpView({
   localBusy,
   localMessage,
   localSelectedPath,
+  localTransferProgress,
+  sftpTransferProgress,
   formatBytes,
   formatUnixTime,
   onSelectSftpProfile,
@@ -79,11 +85,77 @@ export function SftpView({
   onLocalEnterDir,
   onLocalSelectPath,
   onOpenLocalContextMenu,
-  onOpenCreateEditor
+  onOpenCreateEditor,
+  canCancelDownload,
+  onCancelDownload
 }: SftpViewProps) {
+  const formatEta = (value?: number | null) => {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+      return '计算中...';
+    }
+    if (value <= 0) {
+      return '00:00';
+    }
+    const total = Math.floor(value);
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const seconds = total % 60;
+    if (hours > 0) {
+      return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  };
+
+  const renderProgress = (payload: SftpTransferProgressPayload, kind: 'upload' | 'download') => {
+    const title =
+      payload.status === 'done'
+        ? kind === 'upload'
+          ? '上传完成'
+          : '下载完成'
+        : payload.status === 'error'
+          ? kind === 'upload'
+            ? '上传失败'
+            : '下载失败'
+          : payload.status === 'canceled'
+            ? kind === 'upload'
+              ? '上传已取消'
+              : '下载已取消'
+            : kind === 'upload'
+              ? '上传中'
+              : '下载中';
+    return (
+      <div className={payload.status === 'error' ? 'transfer-progress error' : 'transfer-progress'}>
+        <div className="transfer-progress-meta">
+          <span>
+            {title} {payload.percent}%
+          </span>
+          <span>
+            {formatBytes(payload.transferred_bytes)} / {formatBytes(payload.total_bytes)}
+          </span>
+        </div>
+        <div className="transfer-progress-track">
+          <div className="transfer-progress-bar" style={{ width: `${payload.percent}%` }} />
+        </div>
+        {kind === 'download' && payload.status === 'running' && canCancelDownload && (
+          <div className="transfer-progress-actions">
+            <button type="button" className="transfer-progress-cancel" onClick={onCancelDownload}>
+              取消下载
+            </button>
+          </div>
+        )}
+        {payload.status === 'running' && (
+          <p className="transfer-progress-eta">
+            预计剩余：{formatEta(payload.eta_seconds)}
+            {payload.speed_bps ? ` · ${formatBytes(payload.speed_bps)}/s` : ''}
+          </p>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="sftp-dual-page">
-      <section className="sftp-pane content-section">
+      <section className="sftp-pane">
         <div className="sftp-pane-header">
           <h2>Local</h2>
           <div className="section-actions">
@@ -115,6 +187,7 @@ export function SftpView({
         </div>
 
         {localMessage && <p className="status-line">{localMessage}</p>}
+        {localTransferProgress && renderProgress(localTransferProgress, 'upload')}
 
         <div
           className="sftp-table-wrap"
@@ -209,7 +282,7 @@ export function SftpView({
         </div>
       </section>
 
-      <section className="sftp-pane content-section">
+      <section className="sftp-pane">
         <div className="sftp-pane-header">
           <h2>Remote (SFTP)</h2>
           <div className="section-actions">
@@ -238,6 +311,7 @@ export function SftpView({
         </div>
 
         {sftpMessage && <p className="status-line">{sftpMessage}</p>}
+        {sftpTransferProgress && renderProgress(sftpTransferProgress, 'download')}
 
         {profiles.length === 0 ? (
           <div className="empty-state">

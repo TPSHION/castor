@@ -29,6 +29,9 @@ import type {
   SftpDownloadResult,
   SftpEntry,
   SftpListRequest,
+  SftpUploadRequest,
+  SftpUploadResult,
+  SftpTransferProgressPayload,
   SftpRenameRequest,
   SftpSetPermissionsRequest,
   UpsertConnectionProfileRequest
@@ -62,6 +65,7 @@ import {
 } from './app/helpers';
 
 export function App() {
+  const MIN_TRANSFER_PROGRESS_VISIBLE_MS = 600;
   const [contentView, setContentView] = useState<ContentView>('servers');
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
   const [profilesBusy, setProfilesBusy] = useState(false);
@@ -84,6 +88,10 @@ export function App() {
   const [localContextMenu, setLocalContextMenu] = useState<LocalContextMenuState | null>(null);
   const [localActionDialog, setLocalActionDialog] = useState<LocalActionDialogState>(null);
   const [localActionError, setLocalActionError] = useState<string | null>(null);
+  const [localTransferProgress, setLocalTransferProgress] = useState<SftpTransferProgressPayload | null>(null);
+  const activeLocalUploadTransferIdRef = useRef<string | null>(null);
+  const localTransferStartedAtRef = useRef<number | null>(null);
+  const localTransferClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const localContextMenuRef = useRef<HTMLDivElement>(null);
 
   const [selectedSftpProfileId, setSelectedSftpProfileId] = useState<string>('');
@@ -97,6 +105,10 @@ export function App() {
   const [sftpContextMenu, setSftpContextMenu] = useState<SftpContextMenuState | null>(null);
   const [sftpActionDialog, setSftpActionDialog] = useState<SftpActionDialogState>(null);
   const [sftpActionError, setSftpActionError] = useState<string | null>(null);
+  const [sftpTransferProgress, setSftpTransferProgress] = useState<SftpTransferProgressPayload | null>(null);
+  const activeSftpDownloadTransferIdRef = useRef<string | null>(null);
+  const sftpTransferStartedAtRef = useRef<number | null>(null);
+  const sftpTransferClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sftpContextMenuRef = useRef<HTMLDivElement>(null);
 
   const [sessionTabs, setSessionTabs] = useState<SessionTab[]>([]);
@@ -117,8 +129,126 @@ export function App() {
 
   const editorValidation = useMemo(() => validateEditor(editor), [editor]);
 
+  function createTransferId() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return `transfer-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  function clearLocalTransferTimer() {
+    if (localTransferClearTimerRef.current) {
+      clearTimeout(localTransferClearTimerRef.current);
+      localTransferClearTimerRef.current = null;
+    }
+  }
+
+  function clearSftpTransferTimer() {
+    if (sftpTransferClearTimerRef.current) {
+      clearTimeout(sftpTransferClearTimerRef.current);
+      sftpTransferClearTimerRef.current = null;
+    }
+  }
+
+  function withTransferMetrics(
+    payload: SftpTransferProgressPayload,
+    startedAt: number | null
+  ): SftpTransferProgressPayload {
+    if (payload.status === 'done') {
+      return { ...payload, eta_seconds: 0, speed_bps: null };
+    }
+
+    if (payload.status !== 'running' || startedAt === null || payload.transferred_bytes <= 0) {
+      return { ...payload, eta_seconds: null, speed_bps: null };
+    }
+
+    const elapsedSeconds = Math.max(0.001, (Date.now() - startedAt) / 1000);
+    const speedBps = payload.transferred_bytes / elapsedSeconds;
+    if (!Number.isFinite(speedBps) || speedBps <= 0) {
+      return { ...payload, eta_seconds: null, speed_bps: null };
+    }
+
+    if (payload.total_bytes > 0 && payload.total_bytes > payload.transferred_bytes) {
+      const remainingBytes = payload.total_bytes - payload.transferred_bytes;
+      return {
+        ...payload,
+        eta_seconds: Math.ceil(remainingBytes / speedBps),
+        speed_bps: speedBps
+      };
+    }
+
+    return { ...payload, eta_seconds: null, speed_bps: speedBps };
+  }
+
+  function applyLocalTransferProgress(payload: SftpTransferProgressPayload) {
+    if (payload.status === 'running') {
+      clearLocalTransferTimer();
+      if (localTransferStartedAtRef.current === null) {
+        localTransferStartedAtRef.current = Date.now();
+      }
+      setLocalTransferProgress(withTransferMetrics(payload, localTransferStartedAtRef.current));
+      return;
+    }
+
+    setLocalTransferProgress(withTransferMetrics(payload, localTransferStartedAtRef.current));
+    const startedAt = localTransferStartedAtRef.current ?? Date.now();
+    const elapsed = Date.now() - startedAt;
+    const delay = Math.max(0, MIN_TRANSFER_PROGRESS_VISIBLE_MS - elapsed);
+    clearLocalTransferTimer();
+    localTransferClearTimerRef.current = setTimeout(() => {
+      setLocalTransferProgress(null);
+      localTransferStartedAtRef.current = null;
+      localTransferClearTimerRef.current = null;
+    }, delay);
+  }
+
+  function applySftpTransferProgress(payload: SftpTransferProgressPayload) {
+    if (payload.status === 'running') {
+      clearSftpTransferTimer();
+      if (sftpTransferStartedAtRef.current === null) {
+        sftpTransferStartedAtRef.current = Date.now();
+      }
+      setSftpTransferProgress(withTransferMetrics(payload, sftpTransferStartedAtRef.current));
+      return;
+    }
+
+    setSftpTransferProgress(withTransferMetrics(payload, sftpTransferStartedAtRef.current));
+    const startedAt = sftpTransferStartedAtRef.current ?? Date.now();
+    const elapsed = Date.now() - startedAt;
+    const delay = Math.max(0, MIN_TRANSFER_PROGRESS_VISIBLE_MS - elapsed);
+    clearSftpTransferTimer();
+    sftpTransferClearTimerRef.current = setTimeout(() => {
+      setSftpTransferProgress(null);
+      sftpTransferStartedAtRef.current = null;
+      sftpTransferClearTimerRef.current = null;
+    }, delay);
+  }
+
   useEffect(() => {
     void refreshProfiles();
+  }, []);
+
+  useEffect(() => {
+    const updateSftpScrollbarWidth = () => {
+      const probe = document.createElement('div');
+      probe.style.width = '120px';
+      probe.style.height = '120px';
+      probe.style.overflow = 'scroll';
+      probe.style.position = 'absolute';
+      probe.style.top = '-9999px';
+      probe.style.left = '-9999px';
+      probe.style.visibility = 'hidden';
+      document.body.appendChild(probe);
+      const scrollbarWidth = probe.offsetWidth - probe.clientWidth;
+      document.body.removeChild(probe);
+      document.documentElement.style.setProperty('--sftp-body-scrollbar-width', `${Math.max(0, scrollbarWidth)}px`);
+    };
+
+    updateSftpScrollbarWidth();
+    window.addEventListener('resize', updateSftpScrollbarWidth);
+    return () => {
+      window.removeEventListener('resize', updateSftpScrollbarWidth);
+    };
   }, []);
 
   useEffect(() => {
@@ -131,6 +261,14 @@ export function App() {
       setSftpContextMenu(null);
       setSftpActionDialog(null);
       setSftpActionError(null);
+      clearLocalTransferTimer();
+      clearSftpTransferTimer();
+      activeLocalUploadTransferIdRef.current = null;
+      activeSftpDownloadTransferIdRef.current = null;
+      localTransferStartedAtRef.current = null;
+      sftpTransferStartedAtRef.current = null;
+      setLocalTransferProgress(null);
+      setSftpTransferProgress(null);
       return;
     }
 
@@ -145,6 +283,10 @@ export function App() {
       setSftpContextMenu(null);
       setSftpActionDialog(null);
       setSftpActionError(null);
+      clearSftpTransferTimer();
+      activeSftpDownloadTransferIdRef.current = null;
+      sftpTransferStartedAtRef.current = null;
+      setSftpTransferProgress(null);
       setSftpMessage('当前远程连接服务器已不存在，请重新选择。');
     }
   }, [profiles, selectedSftpProfileId, connectedSftpProfileId]);
@@ -279,6 +421,54 @@ export function App() {
           return tab;
         })
       );
+    });
+
+    return () => {
+      mounted = false;
+      void unsubscribePromise.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  useEffect(
+    () => () => {
+      clearLocalTransferTimer();
+      clearSftpTransferTimer();
+    },
+    []
+  );
+
+  useEffect(() => {
+    let mounted = true;
+
+    const unsubscribePromise = listen<SftpTransferProgressPayload>('sftp-transfer-progress', (event) => {
+      if (!mounted) {
+        return;
+      }
+
+      if (event.payload.direction === 'upload') {
+        if (
+          activeLocalUploadTransferIdRef.current &&
+          event.payload.transfer_id !== activeLocalUploadTransferIdRef.current
+        ) {
+          return;
+        }
+        applyLocalTransferProgress(event.payload);
+        if (event.payload.status !== 'running') {
+          activeLocalUploadTransferIdRef.current = null;
+        }
+        return;
+      }
+
+      if (
+        activeSftpDownloadTransferIdRef.current &&
+        event.payload.transfer_id !== activeSftpDownloadTransferIdRef.current
+      ) {
+        return;
+      }
+      applySftpTransferProgress(event.payload);
+      if (event.payload.status !== 'running') {
+        activeSftpDownloadTransferIdRef.current = null;
+      }
     });
 
     return () => {
@@ -449,6 +639,72 @@ export function App() {
     }
   }
 
+  async function onLocalCopyToTarget(entry: LocalFsEntry) {
+    if (!connectedSftpProfile) {
+      setLocalMessage('请先连接服务器。');
+      return;
+    }
+
+    const auth = buildAuthFromProfile(connectedSftpProfile);
+    if (!auth) {
+      setLocalMessage(`服务器 ${connectedSftpProfile.name} 缺少可用凭据，请先编辑并保存。`);
+      return;
+    }
+
+    setLocalContextMenu(null);
+    setLocalSelectedPath(entry.path);
+    setLocalBusy(true);
+    const transferId = createTransferId();
+    activeLocalUploadTransferIdRef.current = transferId;
+    clearLocalTransferTimer();
+    localTransferStartedAtRef.current = Date.now();
+    setLocalTransferProgress({
+      transfer_id: transferId,
+      direction: 'upload',
+      status: 'running',
+      path: entry.path,
+      target_path: sftpPath,
+      transferred_bytes: 0,
+      total_bytes: 0,
+      percent: 0
+    });
+    setLocalMessage(`正在复制到目标目录：${entry.path}`);
+
+    const request: SftpUploadRequest = {
+      host: connectedSftpProfile.host,
+      port: connectedSftpProfile.port,
+      username: connectedSftpProfile.username,
+      auth,
+      local_path: entry.path,
+      remote_dir: sftpPath,
+      transfer_id: transferId
+    };
+
+    try {
+      const result = await invoke<SftpUploadResult>('sftp_upload_path', { request });
+      setLocalMessage(`已复制到目标目录：${result.remote_path}（${formatBytes(result.bytes)}）`);
+      await loadSftpDir(connectedSftpProfile, sftpPath);
+    } catch (invokeError) {
+      const message = formatInvokeError(invokeError);
+      setLocalMessage(message);
+      if (!message.includes('已取消')) {
+        applyLocalTransferProgress({
+          transfer_id: transferId,
+          direction: 'upload',
+          status: 'error',
+          path: entry.path,
+          target_path: sftpPath,
+          transferred_bytes: 0,
+          total_bytes: 0,
+          percent: 0
+        });
+        activeLocalUploadTransferIdRef.current = null;
+      }
+    } finally {
+      setLocalBusy(false);
+    }
+  }
+
   async function submitLocalActionDialog() {
     if (!localActionDialog) {
       return;
@@ -581,13 +837,42 @@ export function App() {
     };
 
     setSftpBusy(true);
+    const transferId = createTransferId();
+    activeSftpDownloadTransferIdRef.current = transferId;
+    request.transfer_id = transferId;
+    clearSftpTransferTimer();
+    sftpTransferStartedAtRef.current = Date.now();
+    setSftpTransferProgress({
+      transfer_id: transferId,
+      direction: 'download',
+      status: 'running',
+      path: entry.path,
+      target_path: localPath || '',
+      transferred_bytes: 0,
+      total_bytes: 0,
+      percent: 0
+    });
     setSftpMessage(`正在下载：${entry.path}`);
 
     try {
       const result = await invoke<SftpDownloadResult>('sftp_download_file', { request });
       setSftpMessage(`下载完成：${result.local_path}（${formatBytes(result.bytes)}）`);
     } catch (invokeError) {
-      setSftpMessage(formatInvokeError(invokeError));
+      const message = formatInvokeError(invokeError);
+      setSftpMessage(message);
+      if (!message.includes('已取消')) {
+        applySftpTransferProgress({
+          transfer_id: transferId,
+          direction: 'download',
+          status: 'error',
+          path: entry.path,
+          target_path: localPath || '',
+          transferred_bytes: 0,
+          total_bytes: 0,
+          percent: 0
+        });
+        activeSftpDownloadTransferIdRef.current = null;
+      }
     } finally {
       setSftpBusy(false);
     }
@@ -648,7 +933,21 @@ export function App() {
     setSftpContextMenu(null);
     setSftpSelectedPath(entry.path);
     setSftpBusy(true);
-    setSftpMessage(`正在复制到目标目录：${entry.path}`);
+    const transferId = createTransferId();
+    activeSftpDownloadTransferIdRef.current = transferId;
+    clearSftpTransferTimer();
+    sftpTransferStartedAtRef.current = Date.now();
+    setSftpTransferProgress({
+      transfer_id: transferId,
+      direction: 'download',
+      status: 'running',
+      path: entry.path,
+      target_path: localPath || '',
+      transferred_bytes: 0,
+      total_bytes: 0,
+      percent: 0
+    });
+    setSftpMessage(`正在下载到目标目录：${entry.path}`);
 
     const request: SftpDownloadRequest = {
       host: context.profile.host,
@@ -658,17 +957,53 @@ export function App() {
       remote_path: entry.path,
       local_dir: localPath || undefined
     };
+    request.transfer_id = transferId;
 
     try {
       const result = await invoke<SftpDownloadResult>('sftp_download_file', { request });
-      setSftpMessage(`已复制到目标目录：${result.local_path}（${formatBytes(result.bytes)}）`);
+      setSftpMessage(`已下载到目标目录：${result.local_path}（${formatBytes(result.bytes)}）`);
       if (localPath) {
         void loadLocalDir(localPath);
       }
     } catch (invokeError) {
-      setSftpMessage(formatInvokeError(invokeError));
+      const message = formatInvokeError(invokeError);
+      setSftpMessage(message);
+      if (!message.includes('已取消')) {
+        applySftpTransferProgress({
+          transfer_id: transferId,
+          direction: 'download',
+          status: 'error',
+          path: entry.path,
+          target_path: localPath || '',
+          transferred_bytes: 0,
+          total_bytes: 0,
+          percent: 0
+        });
+        activeSftpDownloadTransferIdRef.current = null;
+      }
     } finally {
       setSftpBusy(false);
+    }
+  }
+
+  async function onCancelSftpDownload() {
+    const transferId = activeSftpDownloadTransferIdRef.current;
+    if (!transferId) {
+      return;
+    }
+
+    setSftpMessage('正在取消下载...');
+    try {
+      await invoke('cancel_sftp_transfer', {
+        request: {
+          transfer_id: transferId
+        }
+      });
+    } catch (invokeError) {
+      const message = formatInvokeError(invokeError);
+      if (!message.includes('不存在') && !message.includes('已结束')) {
+        setSftpMessage(message);
+      }
     }
   }
 
@@ -851,6 +1186,9 @@ export function App() {
     setSftpContextMenu(null);
     setSftpActionDialog(null);
     setSftpActionError(null);
+    clearSftpTransferTimer();
+    sftpTransferStartedAtRef.current = null;
+    setSftpTransferProgress(null);
     setSftpMessage(`已关闭与 ${name} 的 SFTP 连接`);
   }
 
@@ -1184,6 +1522,8 @@ export function App() {
             localBusy={localBusy}
             localMessage={localMessage}
             localSelectedPath={localSelectedPath}
+            localTransferProgress={localTransferProgress}
+            sftpTransferProgress={sftpTransferProgress}
             formatBytes={formatBytes}
             formatUnixTime={formatUnixTime}
             onSelectSftpProfile={onSelectSftpProfile}
@@ -1209,6 +1549,13 @@ export function App() {
             onLocalSelectPath={setLocalSelectedPath}
             onOpenLocalContextMenu={(x, y, entry) => openLocalContextMenuAt(x, y, entry)}
             onOpenCreateEditor={openCreateEditor}
+            canCancelDownload={Boolean(
+              sftpTransferProgress &&
+                sftpTransferProgress.direction === 'download' &&
+                sftpTransferProgress.status === 'running' &&
+                activeSftpDownloadTransferIdRef.current
+            )}
+            onCancelDownload={() => void onCancelSftpDownload()}
           />
         </div>
         <div className={contentView === 'workspace' ? 'view-page workspace-page' : 'view-page workspace-page hidden'}>
@@ -1348,11 +1695,18 @@ export function App() {
         contextMenu={localContextMenu}
         menuRef={localContextMenuRef}
         hasLocalPath={Boolean(localPath)}
+        canCopyToTarget={Boolean(connectedSftpProfile)}
         onClose={() => setLocalContextMenu(null)}
         onOpenDir={(path) => {
           const entry = localEntries.find((item) => item.path === path);
           if (entry) {
             void onLocalEnterDir(entry);
+          }
+        }}
+        onCopyToTarget={(path) => {
+          const entry = localEntries.find((item) => item.path === path);
+          if (entry) {
+            void onLocalCopyToTarget(entry);
           }
         }}
         onOpenRename={(path) => {

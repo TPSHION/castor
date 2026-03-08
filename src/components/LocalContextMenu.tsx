@@ -6,8 +6,10 @@ type LocalContextMenuProps = {
   contextMenu: LocalContextMenuState | null;
   menuRef: RefObject<HTMLDivElement>;
   hasLocalPath: boolean;
+  canCopyToTarget: boolean;
   onClose: () => void;
   onOpenDir: (path: string) => void;
+  onCopyToTarget: (path: string) => void;
   onOpenRename: (path: string) => void;
   onOpenDelete: (path: string) => void;
   onRefresh: () => void;
@@ -19,8 +21,10 @@ export function LocalContextMenu({
   contextMenu,
   menuRef,
   hasLocalPath,
+  canCopyToTarget,
   onClose,
   onOpenDir,
+  onCopyToTarget,
   onOpenRename,
   onOpenDelete,
   onRefresh,
@@ -31,7 +35,7 @@ export function LocalContextMenu({
   }
 
   const menuWidth = 240;
-  const menuHeight = contextMenu.entry ? 260 : 128;
+  const menuHeight = contextMenu.entry ? 304 : 128;
   const left =
     typeof window === 'undefined'
       ? contextMenu.x
@@ -65,10 +69,24 @@ export function LocalContextMenu({
                 打开目录
               </button>
             )}
-            <button type="button" className="sftp-context-action" onClick={() => onOpenRename(entry.path)}>
+            <button
+              type="button"
+              className="sftp-context-action"
+              onClick={() => {
+                onClose();
+                onOpenRename(entry.path);
+              }}
+            >
               重命名
             </button>
-            <button type="button" className="sftp-context-action danger" onClick={() => onOpenDelete(entry.path)}>
+            <button
+              type="button"
+              className="sftp-context-action danger"
+              onClick={() => {
+                onClose();
+                onOpenDelete(entry.path);
+              }}
+            >
               删除
             </button>
             <div className="sftp-context-separator" />
@@ -88,12 +106,27 @@ export function LocalContextMenu({
               type="button"
               className="sftp-context-action"
               onClick={() => {
+                onClose();
                 if (hasLocalPath) {
                   onOpenCreateDir();
                 }
               }}
             >
               新建文件夹
+            </button>
+            <div className="sftp-context-separator" />
+            <button
+              type="button"
+              className="sftp-context-action"
+              disabled={!canCopyToTarget}
+              onClick={() => {
+                onClose();
+                if (canCopyToTarget) {
+                  onCopyToTarget(entry.path);
+                }
+              }}
+            >
+              上传到目标目录
             </button>
           </>
         ) : (
@@ -114,6 +147,7 @@ export function LocalContextMenu({
               type="button"
               className="sftp-context-action"
               onClick={() => {
+                onClose();
                 if (hasLocalPath) {
                   onOpenCreateDir();
                 }

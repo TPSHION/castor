@@ -11,12 +11,15 @@ use crate::profiles::{
   UpsertConnectionProfileRequest
 };
 use crate::sftp::{
+  cancel_transfer as cancel_sftp_transfer_impl,
   create_dir as sftp_create_dir_impl,
   delete_entry as sftp_delete_entry_impl,
   download_file as sftp_download_file_impl, list_dir as sftp_list_dir_impl, SftpDownloadRequest,
   SftpDownloadResult, SftpEntry, SftpListRequest, SftpCreateDirRequest, SftpDeleteRequest,
-  SftpRenameRequest, SftpSetPermissionsRequest, rename_entry as sftp_rename_entry_impl,
-  set_permissions as sftp_set_permissions_impl
+  CancelSftpTransferRequest,
+  SftpRenameRequest, SftpSetPermissionsRequest, SftpUploadRequest, SftpUploadResult,
+  rename_entry as sftp_rename_entry_impl, set_permissions as sftp_set_permissions_impl,
+  upload_path as sftp_upload_path_impl
 };
 use crate::ssh::{
   ConnectRequest, DisconnectRequest, LocalConnectRequest, ResizeRequest, SendInputRequest,
@@ -102,8 +105,30 @@ pub fn sftp_list_dir(request: SftpListRequest) -> Result<Vec<SftpEntry>, String>
 }
 
 #[tauri::command]
-pub fn sftp_download_file(request: SftpDownloadRequest) -> Result<SftpDownloadResult, String> {
-  sftp_download_file_impl(request)
+pub async fn sftp_download_file(
+  app: AppHandle,
+  request: SftpDownloadRequest
+) -> Result<SftpDownloadResult, String> {
+  let app_handle = app.clone();
+  tauri::async_runtime::spawn_blocking(move || sftp_download_file_impl(&app_handle, request))
+    .await
+    .map_err(|err| format!("failed to join download task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn sftp_upload_path(
+  app: AppHandle,
+  request: SftpUploadRequest
+) -> Result<SftpUploadResult, String> {
+  let app_handle = app.clone();
+  tauri::async_runtime::spawn_blocking(move || sftp_upload_path_impl(&app_handle, request))
+    .await
+    .map_err(|err| format!("failed to join upload task: {err}"))?
+}
+
+#[tauri::command]
+pub fn cancel_sftp_transfer(request: CancelSftpTransferRequest) -> Result<(), String> {
+  cancel_sftp_transfer_impl(request)
 }
 
 #[tauri::command]

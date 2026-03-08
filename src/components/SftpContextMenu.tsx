@@ -39,7 +39,7 @@ export function SftpContextMenu({
   }
 
   const menuWidth = 240;
-  const menuHeight = contextMenu.entry ? 320 : 128;
+  const menuHeight = contextMenu.entry ? 356 : 128;
   const left =
     typeof window === 'undefined'
       ? contextMenu.x
@@ -73,13 +73,24 @@ export function SftpContextMenu({
                 打开目录
               </button>
             )}
-            <button type="button" className="sftp-context-action" onClick={() => onCopyToTarget(entry.path)}>
-              复制到目标目录
-            </button>
-            <button type="button" className="sftp-context-action" onClick={() => onOpenRename(entry.path)}>
+            <button
+              type="button"
+              className="sftp-context-action"
+              onClick={() => {
+                onClose();
+                onOpenRename(entry.path);
+              }}
+            >
               重命名
             </button>
-            <button type="button" className="sftp-context-action danger" onClick={() => onOpenDelete(entry.path)}>
+            <button
+              type="button"
+              className="sftp-context-action danger"
+              onClick={() => {
+                onClose();
+                onOpenDelete(entry.path);
+              }}
+            >
               删除
             </button>
             <div className="sftp-context-separator" />
@@ -95,10 +106,35 @@ export function SftpContextMenu({
             >
               刷新
             </button>
-            <button type="button" className="sftp-context-action" onClick={() => onOpenCreateDir(currentPath)}>
+            <button
+              type="button"
+              className="sftp-context-action"
+              onClick={() => {
+                onClose();
+                onOpenCreateDir(currentPath);
+              }}
+            >
               新建文件夹
             </button>
-            <button type="button" className="sftp-context-action" onClick={() => onOpenPermissions(entry.path)}>
+            <div className="sftp-context-separator" />
+            <button
+              type="button"
+              className="sftp-context-action"
+              onClick={() => {
+                onClose();
+                onCopyToTarget(entry.path);
+              }}
+            >
+              下载到目标目录
+            </button>
+            <button
+              type="button"
+              className="sftp-context-action"
+              onClick={() => {
+                onClose();
+                onOpenPermissions(entry.path);
+              }}
+            >
               编辑权限
               <span className="sftp-context-meta">{formatPermissionMode(entry.permissions)}</span>
             </button>
@@ -117,7 +153,14 @@ export function SftpContextMenu({
             >
               刷新
             </button>
-            <button type="button" className="sftp-context-action" onClick={() => onOpenCreateDir(currentPath)}>
+            <button
+              type="button"
+              className="sftp-context-action"
+              onClick={() => {
+                onClose();
+                onOpenCreateDir(currentPath);
+              }}
+            >
               新建文件夹
             </button>
           </>

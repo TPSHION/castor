@@ -13,6 +13,7 @@
   --danger: #ef6b82;
   --radius: 12px;
   --dir-panel-height: 520px;
+  --sftp-body-scrollbar-width: 0px;
   font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
 }
 
@@ -165,7 +166,15 @@ body {
 }
 
 .window-body.sftp-body {
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+  padding: 0;
+}
+
+.window-body.sftp-body > .view-page {
+  height: 100%;
+  min-height: 0;
 }
 
 .view-page {
@@ -230,17 +239,35 @@ body {
 }
 
 .sftp-dual-page {
+  height: 100%;
   min-height: 100%;
   display: grid;
   grid-template-columns: minmax(360px, 1fr) minmax(360px, 1fr);
-  gap: 12px;
+  gap: 0;
 }
 
 .sftp-pane {
   min-width: 0;
-  display: grid;
-  grid-template-rows: auto auto auto 1fr;
-  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+}
+
+.sftp-pane + .sftp-pane {
+  border-left: 1px solid #445a7f;
+  padding-left: 0;
+}
+
+.sftp-pane > .sftp-pane-header,
+.sftp-pane > .sftp-path-bar,
+.sftp-pane > .status-line,
+.sftp-pane > .transfer-progress,
+.sftp-pane > .empty-state,
+.sftp-pane > .sftp-remote-body > .sftp-path-bar {
+  margin-inline: 8px;
 }
 
 .sftp-pane-header {
@@ -248,6 +275,8 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  padding-top: 8px;
+  padding-bottom: 3px;
 }
 
 .sftp-pane-header h2 {
@@ -266,27 +295,38 @@ body {
 }
 
 .sftp-remote-body {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
   gap: 10px;
   min-height: 0;
 }
 
 .sftp-table-wrap {
-  border: 1px solid #445a7f;
-  border-radius: 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding-left: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  max-height: none;
   overflow: hidden;
-  min-height: var(--dir-panel-height);
-  height: var(--dir-panel-height);
-  max-height: var(--dir-panel-height);
 }
 
 .sftp-table {
   width: 100%;
+  height: 100%;
   border-collapse: collapse;
   table-layout: fixed;
 }
 
-.sftp-table thead,
+.sftp-table thead {
+  display: table;
+  width: calc(100% - var(--sftp-body-scrollbar-width));
+  table-layout: fixed;
+}
+
 .sftp-table tbody tr {
   display: table;
   width: 100%;
@@ -295,7 +335,8 @@ body {
 
 .sftp-table tbody {
   display: block;
-  height: calc(var(--dir-panel-height) - 42px);
+  height: calc(100% - 42px);
+  max-height: calc(100% - 42px);
   overflow: auto;
   scrollbar-gutter: stable;
 }
@@ -310,6 +351,26 @@ body {
 
 .sftp-table td {
   overflow: hidden;
+}
+
+.sftp-table th:nth-child(1),
+.sftp-table td:nth-child(1) {
+  width: 44%;
+}
+
+.sftp-table th:nth-child(2),
+.sftp-table td:nth-child(2) {
+  width: 26%;
+}
+
+.sftp-table th:nth-child(3),
+.sftp-table td:nth-child(3) {
+  width: 14%;
+}
+
+.sftp-table th:nth-child(4),
+.sftp-table td:nth-child(4) {
+  width: 16%;
 }
 
 .sftp-entry-row.dir {
@@ -537,6 +598,56 @@ button.danger {
 
 .status-line.error {
   color: var(--danger);
+}
+
+.transfer-progress {
+  display: grid;
+  gap: 4px;
+}
+
+.transfer-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #9fb0d2;
+  font-size: 0.8rem;
+}
+
+.transfer-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  border: 1px solid #344b70;
+  background: #1c2944;
+  overflow: hidden;
+}
+
+.transfer-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #3b88ff, #2dc6ff);
+  transition: width 120ms linear;
+}
+
+.transfer-progress-eta {
+  margin: 0;
+  color: #8fa4cb;
+  font-size: 0.76rem;
+}
+
+.transfer-progress-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.transfer-progress-cancel {
+  padding: 2px 8px;
+  font-size: 0.74rem;
+  border-color: #7a4257;
+  background: #3a1d29;
+}
+
+.transfer-progress.error .transfer-progress-bar {
+  background: linear-gradient(90deg, #d64f6a, #ef6b82);
 }
 
 .host-grid {
@@ -972,6 +1083,31 @@ button.danger {
 
   :root {
     --dir-panel-height: 420px;
+  }
+
+  .window-body.sftp-body {
+    padding: 0;
+  }
+
+  .sftp-pane {
+    padding: 0;
+  }
+
+  .sftp-pane + .sftp-pane {
+    border-left: 0;
+    border-top: 1px solid #445a7f;
+    margin-top: 0;
+    padding-left: 0;
+    padding-top: 0;
+  }
+
+  .sftp-pane > .sftp-pane-header,
+  .sftp-pane > .sftp-path-bar,
+  .sftp-pane > .status-line,
+  .sftp-pane > .transfer-progress,
+  .sftp-pane > .empty-state,
+  .sftp-pane > .sftp-remote-body > .sftp-path-bar {
+    margin-inline: 4px;
   }
 
   .servers-sidebar {

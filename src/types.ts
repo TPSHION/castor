@@ -42,6 +42,17 @@ export type SftpDownloadRequest = {
   auth: AuthConfig;
   remote_path: string;
   local_dir?: string;
+  transfer_id?: string;
+};
+
+export type SftpUploadRequest = {
+  host: string;
+  port?: number;
+  username: string;
+  auth: AuthConfig;
+  local_path: string;
+  remote_dir: string;
+  transfer_id?: string;
 };
 
 export type SftpRenameRequest = {
@@ -91,6 +102,24 @@ export type SftpEntry = {
 export type SftpDownloadResult = {
   local_path: string;
   bytes: number;
+};
+
+export type SftpUploadResult = {
+  remote_path: string;
+  bytes: number;
+};
+
+export type SftpTransferProgressPayload = {
+  transfer_id: string;
+  direction: 'download' | 'upload';
+  status: 'running' | 'done' | 'error' | 'canceled';
+  path: string;
+  target_path: string;
+  transferred_bytes: number;
+  total_bytes: number;
+  percent: number;
+  eta_seconds?: number | null;
+  speed_bps?: number | null;
 };
 
 export type LocalListRequest = {

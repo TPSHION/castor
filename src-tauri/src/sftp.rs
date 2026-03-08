@@ -1,10 +1,16 @@
+use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File};
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use ssh2::{FileStat, Session};
+use tauri::{AppHandle, Emitter};
+use uuid::Uuid;
 
 use crate::ssh::AuthConfig;
 
@@ -27,7 +33,24 @@ pub struct SftpDownloadRequest {
   pub username: String,
   pub auth: AuthConfig,
   pub remote_path: String,
-  pub local_dir: Option<String>
+  pub local_dir: Option<String>,
+  pub transfer_id: Option<String>
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SftpUploadRequest {
+  pub host: String,
+  pub port: Option<u16>,
+  pub username: String,
+  pub auth: AuthConfig,
+  pub local_path: String,
+  pub remote_dir: String,
+  pub transfer_id: Option<String>
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CancelSftpTransferRequest {
+  pub transfer_id: String
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,6 +108,165 @@ pub struct SftpDownloadResult {
   pub bytes: u64
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct SftpUploadResult {
+  pub remote_path: String,
+  pub bytes: u64
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SftpTransferProgressPayload {
+  pub transfer_id: String,
+  pub direction: String,
+  pub status: String,
+  pub path: String,
+  pub target_path: String,
+  pub transferred_bytes: u64,
+  pub total_bytes: u64,
+  pub percent: u8
+}
+
+struct TransferProgressEmitter<'a> {
+  app: &'a AppHandle,
+  transfer_id: String,
+  direction: &'static str,
+  path: String,
+  target_path: String,
+  transferred_bytes: u64,
+  total_bytes: u64,
+  last_percent: u8
+}
+
+impl<'a> TransferProgressEmitter<'a> {
+  fn new(
+    app: &'a AppHandle,
+    transfer_id: String,
+    direction: &'static str,
+    path: String,
+    target_path: String,
+    total_bytes: u64
+  ) -> Self {
+    Self {
+      app,
+      transfer_id,
+      direction,
+      path,
+      target_path,
+      transferred_bytes: 0,
+      total_bytes,
+      last_percent: 0
+    }
+  }
+
+  fn start(&mut self) {
+    self.emit("running");
+  }
+
+  fn advance(&mut self, delta: u64) {
+    self.transferred_bytes = self.transferred_bytes.saturating_add(delta);
+    let percent = self.percent();
+    if percent != self.last_percent {
+      self.last_percent = percent;
+      self.emit("running");
+    }
+  }
+
+  fn finish(&mut self) {
+    if self.total_bytes > 0 {
+      self.transferred_bytes = self.total_bytes.max(self.transferred_bytes);
+    }
+    self.last_percent = 100;
+    self.emit("done");
+  }
+
+  fn fail(&self) {
+    self.emit("error");
+  }
+
+  fn emit(&self, status: &str) {
+    let percent = if status == "done" { 100 } else { self.percent() };
+    let _ = self.app.emit(
+      "sftp-transfer-progress",
+      SftpTransferProgressPayload {
+        transfer_id: self.transfer_id.clone(),
+        direction: self.direction.to_string(),
+        status: status.to_string(),
+        path: self.path.clone(),
+        target_path: self.target_path.clone(),
+        transferred_bytes: self.transferred_bytes,
+        total_bytes: self.total_bytes,
+        percent
+      }
+    );
+  }
+
+  fn percent(&self) -> u8 {
+    if self.total_bytes == 0 {
+      return if self.transferred_bytes > 0 { 100 } else { 0 };
+    }
+
+    ((self.transferred_bytes.saturating_mul(100) / self.total_bytes).min(100)) as u8
+  }
+
+  fn cancel(&self) {
+    self.emit("canceled");
+  }
+}
+
+fn transfer_registry() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+  static REGISTRY: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+  REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_transfer(transfer_id: &str) -> Arc<AtomicBool> {
+  let token = Arc::new(AtomicBool::new(false));
+  if let Ok(mut registry) = transfer_registry().lock() {
+    registry.insert(transfer_id.to_string(), token.clone());
+  }
+  token
+}
+
+fn remove_transfer(transfer_id: &str) {
+  if let Ok(mut registry) = transfer_registry().lock() {
+    registry.remove(transfer_id);
+  }
+}
+
+struct TransferRegistrationGuard {
+  transfer_id: String
+}
+
+impl TransferRegistrationGuard {
+  fn new(transfer_id: String) -> Self {
+    Self { transfer_id }
+  }
+}
+
+impl Drop for TransferRegistrationGuard {
+  fn drop(&mut self) {
+    remove_transfer(&self.transfer_id);
+  }
+}
+
+pub fn cancel_transfer(request: CancelSftpTransferRequest) -> Result<(), String> {
+  let transfer_id = request.transfer_id.trim();
+  if transfer_id.is_empty() {
+    return Err("transfer id is required".to_string());
+  }
+
+  let maybe_token = transfer_registry()
+    .lock()
+    .ok()
+    .and_then(|registry| registry.get(transfer_id).cloned());
+
+  if let Some(token) = maybe_token {
+    token.store(true, Ordering::Relaxed);
+    Ok(())
+  } else {
+    Err("目标下载任务不存在或已结束".to_string())
+  }
+}
+
 pub fn list_dir(request: SftpListRequest) -> Result<Vec<SftpEntry>, String> {
   let normalized_path = normalize_remote_path(request.path.as_deref().unwrap_or("/"));
   let (_session, sftp) = connect_sftp(
@@ -136,8 +318,17 @@ pub fn list_dir(request: SftpListRequest) -> Result<Vec<SftpEntry>, String> {
   Ok(result)
 }
 
-pub fn download_file(request: SftpDownloadRequest) -> Result<SftpDownloadResult, String> {
+pub fn download_file(app: &AppHandle, request: SftpDownloadRequest) -> Result<SftpDownloadResult, String> {
   let remote_path = normalize_remote_path(&request.remote_path);
+  let transfer_id = request
+    .transfer_id
+    .as_deref()
+    .filter(|value| !value.trim().is_empty())
+    .map(|value| value.to_string())
+    .unwrap_or_else(|| Uuid::new_v4().to_string());
+  let cancel_token = register_transfer(&transfer_id);
+  let _registration_guard = TransferRegistrationGuard::new(transfer_id.clone());
+
   let (_session, sftp) = connect_sftp(
     request.host,
     request.port,
@@ -155,13 +346,118 @@ pub fn download_file(request: SftpDownloadRequest) -> Result<SftpDownloadResult,
   fs::create_dir_all(&target_dir)
     .map_err(|err| format!("failed to prepare local directory {}: {err}", target_dir.display()))?;
   let local_path = unique_local_path(&target_dir, &file_name);
+  let local_path_string = local_path.to_string_lossy().to_string();
 
-  let bytes = download_remote_path(&sftp, &remote_path, &local_path)?;
+  let total_bytes = measure_remote_size(&sftp, &remote_path)?;
+  let mut progress = TransferProgressEmitter::new(
+    app,
+    transfer_id.clone(),
+    "download",
+    remote_path.clone(),
+    local_path_string.clone(),
+    total_bytes
+  );
+  progress.start();
+
+  let transfer_result = download_remote_path(
+    &sftp,
+    &remote_path,
+    &local_path,
+    Some(cancel_token.as_ref()),
+    &mut |delta| {
+    progress.advance(delta);
+    }
+  );
+
+  let bytes = match transfer_result {
+    Ok(bytes) => {
+      progress.finish();
+      bytes
+    }
+    Err(err) => {
+      if err == "transfer canceled" {
+        progress.cancel();
+        return Err("下载已取消".to_string());
+      }
+      progress.fail();
+      return Err(err);
+    }
+  };
 
   Ok(SftpDownloadResult {
-    local_path: local_path.to_string_lossy().to_string(),
+    local_path: local_path_string,
     bytes
   })
+}
+
+pub fn upload_path(app: &AppHandle, request: SftpUploadRequest) -> Result<SftpUploadResult, String> {
+  let transfer_id = request
+    .transfer_id
+    .as_deref()
+    .filter(|value| !value.trim().is_empty())
+    .map(|value| value.to_string())
+    .unwrap_or_else(|| Uuid::new_v4().to_string());
+  let cancel_token = register_transfer(&transfer_id);
+  let _registration_guard = TransferRegistrationGuard::new(transfer_id.clone());
+  let local_path = PathBuf::from(request.local_path.trim());
+  if !local_path.exists() {
+    return Err(format!("local path does not exist: {}", local_path.display()));
+  }
+
+  let remote_dir = normalize_remote_path(&request.remote_dir);
+  let (_session, sftp) = connect_sftp(
+    request.host,
+    request.port,
+    request.username,
+    request.auth
+  )?;
+
+  create_remote_dir_all(&sftp, &remote_dir)?;
+
+  let name = local_path
+    .file_name()
+    .map(|item| item.to_string_lossy().to_string())
+    .filter(|item| !item.trim().is_empty())
+    .ok_or_else(|| format!("invalid local path: {}", local_path.display()))?;
+
+  let remote_path = unique_remote_path(&sftp, &remote_dir, &name);
+  let total_bytes = measure_local_size(&local_path)?;
+  let mut progress = TransferProgressEmitter::new(
+    app,
+    transfer_id.clone(),
+    "upload",
+    local_path.to_string_lossy().to_string(),
+    remote_path.clone(),
+    total_bytes
+  );
+  progress.start();
+
+  let transfer_result = upload_local_path(
+    &sftp,
+    &local_path,
+    &remote_path,
+    Some(cancel_token.as_ref()),
+    &mut |delta| {
+    progress.advance(delta);
+    }
+  );
+
+  let bytes = match transfer_result {
+    Ok(bytes) => {
+      progress.finish();
+      bytes
+    }
+    Err(err) => {
+      if err == "transfer canceled" {
+        progress.cancel();
+        return Err("上传已取消".to_string());
+      }
+      progress.fail();
+      return Err(err);
+    }
+  };
+
+  Ok(SftpUploadResult { remote_path, bytes })
 }
 
 pub fn rename_entry(request: SftpRenameRequest) -> Result<(), String> {
@@ -375,7 +671,20 @@ fn remove_remote_path_recursive(sftp: &ssh2::Sftp, path: &str) -> Result<(), Str
     .map_err(|err| format!("failed to delete directory {path}: {err}"))
 }
 
-fn download_remote_path(sftp: &ssh2::Sftp, remote_path: &str, local_path: &Path) -> Result<u64, String> {
+fn download_remote_path<F>(
+  sftp: &ssh2::Sftp,
+  remote_path: &str,
+  local_path: &Path,
+  cancel_token: Option<&AtomicBool>,
+  on_progress: &mut F
+) -> Result<u64, String>
+where
+  F: FnMut(u64)
+{
+  if is_transfer_canceled(cancel_token) {
+    return Err("transfer canceled".to_string());
+  }
+
   let stat = sftp
     .stat(Path::new(remote_path))
     .map_err(|err| format!("failed to inspect {remote_path}: {err}"))?;
@@ -400,8 +709,13 @@ fn download_remote_path(sftp: &ssh2::Sftp, remote_path: &str, local_path: &Path)
     let mut local_file = File::create(local_path)
       .map_err(|err| format!("failed to create local file {}: {err}", local_path.display()))?;
 
-    return std::io::copy(&mut remote_file, &mut local_file)
-      .map_err(|err| format!("failed to download remote file {remote_path}: {err}"));
+    return copy_stream(&mut remote_file, &mut local_file, cancel_token, on_progress).map_err(|err| {
+      if err == "transfer canceled" {
+        err
+      } else {
+        format!("failed to download remote file {remote_path}: {err}")
+      }
+    });
   }
 
   fs::create_dir_all(local_path)
@@ -423,10 +737,227 @@ fn download_remote_path(sftp: &ssh2::Sftp, remote_path: &str, local_path: &Path)
 
     let next_remote_path = join_remote_path(remote_path, &name);
     let next_local_path = local_path.join(&name);
-    total_bytes += download_remote_path(sftp, &next_remote_path, &next_local_path)?;
+    total_bytes += download_remote_path(
+      sftp,
+      &next_remote_path,
+      &next_local_path,
+      cancel_token,
+      on_progress
+    )?;
   }
 
   Ok(total_bytes)
+}
+
+fn upload_local_path<F>(
+  sftp: &ssh2::Sftp,
+  local_path: &Path,
+  remote_path: &str,
+  cancel_token: Option<&AtomicBool>,
+  on_progress: &mut F
+) -> Result<u64, String>
+where
+  F: FnMut(u64)
+{
+  if is_transfer_canceled(cancel_token) {
+    return Err("transfer canceled".to_string());
+  }
+
+  let metadata = fs::metadata(local_path)
+    .map_err(|err| format!("failed to inspect local path {}: {err}", local_path.display()))?;
+
+  if metadata.is_file() {
+    if let Some(parent) = Path::new(remote_path).parent().and_then(|item| item.to_str()) {
+      let normalized_parent = normalize_remote_path(parent);
+      create_remote_dir_all(sftp, &normalized_parent)?;
+    }
+
+    let mut local_file = File::open(local_path)
+      .map_err(|err| format!("failed to open local file {}: {err}", local_path.display()))?;
+    let mut remote_file = sftp
+      .create(Path::new(remote_path))
+      .map_err(|err| format!("failed to create remote file {remote_path}: {err}"))?;
+
+    return copy_stream(&mut local_file, &mut remote_file, cancel_token, on_progress).map_err(|err| {
+      if err == "transfer canceled" {
+        err
+      } else {
+        format!("failed to upload local file {}: {err}", local_path.display())
+      }
+    });
+  }
+
+  if metadata.is_dir() {
+    create_remote_dir_all(sftp, remote_path)?;
+    let mut total_bytes = 0u64;
+
+    let children = fs::read_dir(local_path)
+      .map_err(|err| format!("failed to read local directory {}: {err}", local_path.display()))?;
+
+    for child in children {
+      let child = child.map_err(|err| {
+        format!("failed to iterate local directory {}: {err}", local_path.display())
+      })?;
+      let child_path = child.path();
+      let name = child
+        .file_name()
+        .to_string_lossy()
+        .to_string();
+      if name.is_empty() {
+        continue;
+      }
+      let child_remote_path = join_remote_path(remote_path, &name);
+      total_bytes += upload_local_path(
+        sftp,
+        &child_path,
+        &child_remote_path,
+        cancel_token,
+        on_progress
+      )?;
+    }
+
+    return Ok(total_bytes);
+  }
+
+  Err(format!(
+    "unsupported local path type: {}",
+    local_path.display()
+  ))
+}
+
+fn create_remote_dir_all(sftp: &ssh2::Sftp, path: &str) -> Result<(), String> {
+  let normalized = normalize_remote_path(path);
+  if normalized == "/" {
+    return Ok(());
+  }
+
+  let mut current = String::from("/");
+  for segment in normalized.trim_start_matches('/').split('/') {
+    if segment.is_empty() {
+      continue;
+    }
+    current = join_remote_path(&current, segment);
+
+    match sftp.stat(Path::new(&current)) {
+      Ok(stat) => {
+        let is_dir = stat
+          .perm
+          .map(|mode| (mode & S_IFMT) == S_IFDIR)
+          .unwrap_or(false);
+        if !is_dir {
+          return Err(format!("remote path exists but is not a directory: {current}"));
+        }
+      }
+      Err(_) => {
+        sftp
+          .mkdir(Path::new(&current), 0o755)
+          .map_err(|err| format!("failed to create remote directory {current}: {err}"))?;
+      }
+    }
+  }
+
+  Ok(())
+}
+
+fn measure_remote_size(sftp: &ssh2::Sftp, remote_path: &str) -> Result<u64, String> {
+  let stat = sftp
+    .stat(Path::new(remote_path))
+    .map_err(|err| format!("failed to inspect {remote_path}: {err}"))?;
+  let is_dir = stat
+    .perm
+    .map(|mode| (mode & S_IFMT) == S_IFDIR)
+    .unwrap_or(false);
+
+  if !is_dir {
+    return Ok(stat.size.unwrap_or(0));
+  }
+
+  let children = sftp
+    .readdir(Path::new(remote_path))
+    .map_err(|err| format!("failed to read directory {remote_path}: {err}"))?;
+
+  let mut total = 0u64;
+  for (child_path, _) in children {
+    let name = child_path
+      .file_name()
+      .map(|item| item.to_string_lossy().to_string())
+      .unwrap_or_default();
+    if name.is_empty() || name == "." || name == ".." {
+      continue;
+    }
+    let next_remote_path = join_remote_path(remote_path, &name);
+    total = total.saturating_add(measure_remote_size(sftp, &next_remote_path)?);
+  }
+
+  Ok(total)
+}
+
+fn measure_local_size(local_path: &Path) -> Result<u64, String> {
+  let metadata = fs::metadata(local_path)
+    .map_err(|err| format!("failed to inspect local path {}: {err}", local_path.display()))?;
+
+  if metadata.is_file() {
+    return Ok(metadata.len());
+  }
+
+  if metadata.is_dir() {
+    let mut total = 0u64;
+    let children = fs::read_dir(local_path)
+      .map_err(|err| format!("failed to read local directory {}: {err}", local_path.display()))?;
+
+    for child in children {
+      let child = child.map_err(|err| {
+        format!("failed to iterate local directory {}: {err}", local_path.display())
+      })?;
+      total = total.saturating_add(measure_local_size(&child.path())?);
+    }
+
+    return Ok(total);
+  }
+
+  Ok(0)
+}
+
+fn copy_stream<R, W, F>(
+  reader: &mut R,
+  writer: &mut W,
+  cancel_token: Option<&AtomicBool>,
+  on_progress: &mut F
+) -> Result<u64, String>
+where
+  R: Read,
+  W: Write,
+  F: FnMut(u64)
+{
+  let mut buffer = [0u8; 64 * 1024];
+  let mut total = 0u64;
+
+  loop {
+    if is_transfer_canceled(cancel_token) {
+      return Err("transfer canceled".to_string());
+    }
+
+    let read_bytes = reader
+      .read(&mut buffer)
+      .map_err(|err| format!("read stream failed: {err}"))?;
+    if read_bytes == 0 {
+      break;
+    }
+    writer
+      .write_all(&buffer[..read_bytes])
+      .map_err(|err| format!("write stream failed: {err}"))?;
+    let chunk = read_bytes as u64;
+    total = total.saturating_add(chunk);
+    on_progress(chunk);
+  }
+
+  Ok(total)
+}
+
+fn is_transfer_canceled(cancel_token: Option<&AtomicBool>) -> bool {
+  cancel_token
+    .map(|token| token.load(Ordering::Relaxed))
+    .unwrap_or(false)
 }
 
 fn resolve_download_dir(path: Option<&str>) -> PathBuf {
@@ -478,6 +1009,35 @@ fn unique_local_path(dir: &Path, filename: &str) -> PathBuf {
       return target;
     }
 
+    index = index.saturating_add(1);
+  }
+}
+
+fn unique_remote_path(sftp: &ssh2::Sftp, dir: &str, filename: &str) -> String {
+  let mut target = join_remote_path(dir, filename);
+  if sftp.stat(Path::new(&target)).is_err() {
+    return target;
+  }
+
+  let source_path = Path::new(filename);
+  let stem = source_path
+    .file_stem()
+    .map(|item| item.to_string_lossy().to_string())
+    .filter(|item| !item.is_empty())
+    .unwrap_or_else(|| "upload".to_string());
+  let ext = source_path.extension().map(|item| item.to_string_lossy().to_string());
+
+  let mut index: u32 = 1;
+  loop {
+    let candidate_name = if let Some(ext) = &ext {
+      format!("{stem}-{index}.{ext}")
+    } else {
+      format!("{stem}-{index}")
+    };
+    target = join_remote_path(dir, &candidate_name);
+    if sftp.stat(Path::new(&target)).is_err() {
+      return target;
+    }
     index = index.saturating_add(1);
   }
 }
