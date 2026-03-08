@@ -86,4 +86,12 @@ export type LocalActionDialogState =
     }
   | null;
 
+export type LocalUploadConflictDialogState =
+  | {
+      localEntry: LocalFsEntry;
+      remoteEntry: SftpEntry;
+      remoteDir: string;
+    }
+  | null;
+
 export type { ConnectionProfile };

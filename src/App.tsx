@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { LocalActionDialog } from './components/LocalActionDialog';
 import { LocalContextMenu } from './components/LocalContextMenu';
+import { LocalUploadConflictDialog } from './components/LocalUploadConflictDialog';
 import { QuickConnectModal } from './components/QuickConnectModal';
 import { ServerEditorModal } from './components/ServerEditorModal';
 import { ServersView } from './components/ServersView';
@@ -32,6 +33,7 @@ import type {
   SftpUploadRequest,
   SftpUploadResult,
   SftpTransferProgressPayload,
+  SftpUploadConflictStrategy,
   SftpRenameRequest,
   SftpSetPermissionsRequest,
   UpsertConnectionProfileRequest
@@ -40,6 +42,7 @@ import type {
   ContentView,
   EditorMode,
   LocalActionDialogState,
+  LocalUploadConflictDialogState,
   LocalContextMenuState,
   ProfileEditor,
   SessionTab,
@@ -87,6 +90,9 @@ export function App() {
   const [localSelectedPath, setLocalSelectedPath] = useState<string | null>(null);
   const [localContextMenu, setLocalContextMenu] = useState<LocalContextMenuState | null>(null);
   const [localActionDialog, setLocalActionDialog] = useState<LocalActionDialogState>(null);
+  const [localUploadConflictDialog, setLocalUploadConflictDialog] = useState<LocalUploadConflictDialogState>(null);
+  const [localUploadConflictRenameValue, setLocalUploadConflictRenameValue] = useState('');
+  const [localUploadConflictError, setLocalUploadConflictError] = useState<string | null>(null);
   const [localActionError, setLocalActionError] = useState<string | null>(null);
   const [localTransferProgress, setLocalTransferProgress] = useState<SftpTransferProgressPayload | null>(null);
   const activeLocalUploadTransferIdRef = useRef<string | null>(null);
@@ -134,6 +140,27 @@ export function App() {
       return crypto.randomUUID();
     }
     return `transfer-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  function suggestRemoteName(baseName: string) {
+    const nameExists = (value: string) => sftpEntries.some((entry) => entry.name === value);
+    if (!nameExists(baseName)) {
+      return baseName;
+    }
+
+    const dotIndex = baseName.lastIndexOf('.');
+    const hasExtension = dotIndex > 0;
+    const stem = hasExtension ? baseName.slice(0, dotIndex) : baseName;
+    const ext = hasExtension ? baseName.slice(dotIndex) : '';
+
+    let index = 1;
+    while (true) {
+      const nextName = `${stem}-${index}${ext}`;
+      if (!nameExists(nextName)) {
+        return nextName;
+      }
+      index += 1;
+    }
   }
 
   function clearLocalTransferTimer() {
@@ -261,6 +288,9 @@ export function App() {
       setSftpContextMenu(null);
       setSftpActionDialog(null);
       setSftpActionError(null);
+      setLocalUploadConflictDialog(null);
+      setLocalUploadConflictRenameValue('');
+      setLocalUploadConflictError(null);
       clearLocalTransferTimer();
       clearSftpTransferTimer();
       activeLocalUploadTransferIdRef.current = null;
@@ -283,6 +313,9 @@ export function App() {
       setSftpContextMenu(null);
       setSftpActionDialog(null);
       setSftpActionError(null);
+      setLocalUploadConflictDialog(null);
+      setLocalUploadConflictRenameValue('');
+      setLocalUploadConflictError(null);
       clearSftpTransferTimer();
       activeSftpDownloadTransferIdRef.current = null;
       sftpTransferStartedAtRef.current = null;
@@ -314,6 +347,9 @@ export function App() {
   useEffect(() => {
     setLocalContextMenu(null);
     setSftpContextMenu(null);
+    setLocalUploadConflictDialog(null);
+    setLocalUploadConflictRenameValue('');
+    setLocalUploadConflictError(null);
   }, [contentView]);
 
   useEffect(() => {
@@ -540,6 +576,15 @@ export function App() {
     setLocalActionError(null);
   }
 
+  function closeLocalUploadConflictDialog() {
+    if (localBusy) {
+      return;
+    }
+    setLocalUploadConflictDialog(null);
+    setLocalUploadConflictRenameValue('');
+    setLocalUploadConflictError(null);
+  }
+
   function updateLocalActionValue(value: string) {
     setLocalActionError(null);
     setLocalActionDialog((current) => {
@@ -556,6 +601,9 @@ export function App() {
   function openLocalContextMenuAt(x: number, y: number, entry: LocalFsEntry | null) {
     setSftpContextMenu(null);
     setLocalActionDialog(null);
+    setLocalUploadConflictDialog(null);
+    setLocalUploadConflictRenameValue('');
+    setLocalUploadConflictError(null);
     setLocalActionError(null);
     setLocalContextMenu({ x, y, entry });
   }
@@ -639,7 +687,11 @@ export function App() {
     }
   }
 
-  async function onLocalCopyToTarget(entry: LocalFsEntry) {
+  async function uploadLocalToTarget(
+    entry: LocalFsEntry,
+    strategy: SftpUploadConflictStrategy = 'auto_rename',
+    remoteName?: string
+  ) {
     if (!connectedSftpProfile) {
       setLocalMessage('请先连接服务器。');
       return;
@@ -652,6 +704,7 @@ export function App() {
     }
 
     setLocalContextMenu(null);
+    setLocalUploadConflictDialog(null);
     setLocalSelectedPath(entry.path);
     setLocalBusy(true);
     const transferId = createTransferId();
@@ -668,7 +721,7 @@ export function App() {
       total_bytes: 0,
       percent: 0
     });
-    setLocalMessage(`正在复制到目标目录：${entry.path}`);
+    setLocalMessage(`正在上传到目标目录：${entry.path}`);
 
     const request: SftpUploadRequest = {
       host: connectedSftpProfile.host,
@@ -677,12 +730,14 @@ export function App() {
       auth,
       local_path: entry.path,
       remote_dir: sftpPath,
+      remote_name: remoteName?.trim() || undefined,
+      conflict_strategy: strategy,
       transfer_id: transferId
     };
 
     try {
       const result = await invoke<SftpUploadResult>('sftp_upload_path', { request });
-      setLocalMessage(`已复制到目标目录：${result.remote_path}（${formatBytes(result.bytes)}）`);
+      setLocalMessage(`已上传到目标目录：${result.remote_path}（${formatBytes(result.bytes)}）`);
       await loadSftpDir(connectedSftpProfile, sftpPath);
     } catch (invokeError) {
       const message = formatInvokeError(invokeError);
@@ -703,6 +758,60 @@ export function App() {
     } finally {
       setLocalBusy(false);
     }
+  }
+
+  async function onLocalCopyToTarget(entry: LocalFsEntry) {
+    if (!connectedSftpProfile) {
+      setLocalMessage('请先连接服务器。');
+      return;
+    }
+
+    const conflict = sftpEntries.find((item) => item.name === entry.name) ?? null;
+    if (conflict) {
+      setLocalContextMenu(null);
+      setLocalUploadConflictRenameValue(suggestRemoteName(entry.name));
+      setLocalUploadConflictError(null);
+      setLocalUploadConflictDialog({
+        localEntry: entry,
+        remoteEntry: conflict,
+        remoteDir: sftpPath
+      });
+      setLocalMessage('目标目录存在同名项，请选择上传策略。');
+      return;
+    }
+
+    await uploadLocalToTarget(entry, 'auto_rename');
+  }
+
+  async function onSubmitLocalUploadConflict(strategy: SftpUploadConflictStrategy) {
+    if (!localUploadConflictDialog) {
+      return;
+    }
+    setLocalUploadConflictError(null);
+    await uploadLocalToTarget(localUploadConflictDialog.localEntry, strategy);
+  }
+
+  async function onSubmitLocalUploadManualRename() {
+    if (!localUploadConflictDialog) {
+      return;
+    }
+
+    const nextName = localUploadConflictRenameValue.trim();
+    if (!nextName) {
+      setLocalUploadConflictError('请输入新的文件名');
+      return;
+    }
+    if (nextName === '.' || nextName === '..' || nextName.includes('/')) {
+      setLocalUploadConflictError('名称不能为 "."、".."，且不能包含 "/"');
+      return;
+    }
+    if (sftpEntries.some((entry) => entry.name === nextName)) {
+      setLocalUploadConflictError('该名称已存在，请更换，或使用“覆盖上传”');
+      return;
+    }
+
+    setLocalUploadConflictError(null);
+    await uploadLocalToTarget(localUploadConflictDialog.localEntry, 'auto_rename', nextName);
   }
 
   async function submitLocalActionDialog() {
@@ -1003,6 +1112,27 @@ export function App() {
       const message = formatInvokeError(invokeError);
       if (!message.includes('不存在') && !message.includes('已结束')) {
         setSftpMessage(message);
+      }
+    }
+  }
+
+  async function onCancelLocalUpload() {
+    const transferId = activeLocalUploadTransferIdRef.current;
+    if (!transferId) {
+      return;
+    }
+
+    setLocalMessage('正在取消上传...');
+    try {
+      await invoke('cancel_sftp_transfer', {
+        request: {
+          transfer_id: transferId
+        }
+      });
+    } catch (invokeError) {
+      const message = formatInvokeError(invokeError);
+      if (!message.includes('不存在') && !message.includes('已结束')) {
+        setLocalMessage(message);
       }
     }
   }
@@ -1549,6 +1679,13 @@ export function App() {
             onLocalSelectPath={setLocalSelectedPath}
             onOpenLocalContextMenu={(x, y, entry) => openLocalContextMenuAt(x, y, entry)}
             onOpenCreateEditor={openCreateEditor}
+            canCancelUpload={Boolean(
+              localTransferProgress &&
+                localTransferProgress.direction === 'upload' &&
+                localTransferProgress.status === 'running' &&
+                activeLocalUploadTransferIdRef.current
+            )}
+            onCancelUpload={() => void onCancelLocalUpload()}
             canCancelDownload={Boolean(
               sftpTransferProgress &&
                 sftpTransferProgress.direction === 'download' &&
@@ -1681,6 +1818,21 @@ export function App() {
           openCreateEditor();
           setContentView('servers');
         }}
+      />
+      <LocalUploadConflictDialog
+        dialog={localUploadConflictDialog}
+        busy={localBusy}
+        manualName={localUploadConflictRenameValue}
+        manualError={localUploadConflictError}
+        onClose={closeLocalUploadConflictDialog}
+        onChangeManualName={(value) => {
+          setLocalUploadConflictRenameValue(value);
+          if (localUploadConflictError) {
+            setLocalUploadConflictError(null);
+          }
+        }}
+        onSubmitManualRename={() => void onSubmitLocalUploadManualRename()}
+        onSelectStrategy={(strategy) => void onSubmitLocalUploadConflict(strategy)}
       />
       <LocalActionDialog
         dialog={localActionDialog}

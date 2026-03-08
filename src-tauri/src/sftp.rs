@@ -45,7 +45,16 @@ pub struct SftpUploadRequest {
   pub auth: AuthConfig,
   pub local_path: String,
   pub remote_dir: String,
+  pub remote_name: Option<String>,
+  pub conflict_strategy: Option<SftpUploadConflictStrategy>,
   pub transfer_id: Option<String>
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SftpUploadConflictStrategy {
+  AutoRename,
+  Overwrite
 }
 
 #[derive(Debug, Deserialize)]
@@ -414,13 +423,35 @@ pub fn upload_path(app: &AppHandle, request: SftpUploadRequest) -> Result<SftpUp
 
   create_remote_dir_all(&sftp, &remote_dir)?;
 
-  let name = local_path
+  let default_name = local_path
     .file_name()
     .map(|item| item.to_string_lossy().to_string())
     .filter(|item| !item.trim().is_empty())
     .ok_or_else(|| format!("invalid local path: {}", local_path.display()))?;
 
-  let remote_path = unique_remote_path(&sftp, &remote_dir, &name);
+  let name = request
+    .remote_name
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(ToOwned::to_owned)
+    .unwrap_or(default_name);
+
+  if !is_valid_remote_name(&name) {
+    return Err("invalid remote name".to_string());
+  }
+
+  let desired_remote_path = join_remote_path(&remote_dir, &name);
+  let conflict_strategy = request
+    .conflict_strategy
+    .unwrap_or(SftpUploadConflictStrategy::AutoRename);
+  let remote_path = match conflict_strategy {
+    SftpUploadConflictStrategy::AutoRename => unique_remote_path(&sftp, &remote_dir, &name),
+    SftpUploadConflictStrategy::Overwrite => {
+      validate_overwrite_target(&sftp, &local_path, &desired_remote_path)?;
+      desired_remote_path
+    }
+  };
   let total_bytes = measure_local_size(&local_path)?;
   let mut progress = TransferProgressEmitter::new(
     app,
@@ -857,6 +888,27 @@ fn create_remote_dir_all(sftp: &ssh2::Sftp, path: &str) -> Result<(), String> {
   }
 
   Ok(())
+}
+
+fn validate_overwrite_target(sftp: &ssh2::Sftp, local_path: &Path, remote_path: &str) -> Result<(), String> {
+  let local_metadata = fs::metadata(local_path)
+    .map_err(|err| format!("failed to inspect local path {}: {err}", local_path.display()))?;
+  let local_is_dir = local_metadata.is_dir();
+
+  match sftp.stat(Path::new(remote_path)) {
+    Ok(remote_stat) => {
+      let remote_is_dir = remote_stat
+        .perm
+        .map(|mode| (mode & S_IFMT) == S_IFDIR)
+        .unwrap_or(false);
+
+      if local_is_dir != remote_is_dir {
+        return Err("远程已存在同名且类型不同，建议使用“自动重命名上传”。".to_string());
+      }
+      Ok(())
+    }
+    Err(_) => Ok(())
+  }
 }
 
 fn measure_remote_size(sftp: &ssh2::Sftp, remote_path: &str) -> Result<u64, String> {

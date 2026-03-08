@@ -41,6 +41,8 @@ type SftpViewProps = {
   onLocalSelectPath: (path: string) => void;
   onOpenLocalContextMenu: (x: number, y: number, entry: LocalFsEntry | null) => void;
   onOpenCreateEditor: () => void;
+  canCancelUpload: boolean;
+  onCancelUpload: () => void;
   canCancelDownload: boolean;
   onCancelDownload: () => void;
 };
@@ -86,6 +88,8 @@ export function SftpView({
   onLocalSelectPath,
   onOpenLocalContextMenu,
   onOpenCreateEditor,
+  canCancelUpload,
+  onCancelUpload,
   canCancelDownload,
   onCancelDownload
 }: SftpViewProps) {
@@ -136,6 +140,13 @@ export function SftpView({
         <div className="transfer-progress-track">
           <div className="transfer-progress-bar" style={{ width: `${payload.percent}%` }} />
         </div>
+        {kind === 'upload' && payload.status === 'running' && canCancelUpload && (
+          <div className="transfer-progress-actions">
+            <button type="button" className="transfer-progress-cancel" onClick={onCancelUpload}>
+              取消上传
+            </button>
+          </div>
+        )}
         {kind === 'download' && payload.status === 'running' && canCancelDownload && (
           <div className="transfer-progress-actions">
             <button type="button" className="transfer-progress-cancel" onClick={onCancelDownload}>

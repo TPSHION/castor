@@ -52,8 +52,12 @@ export type SftpUploadRequest = {
   auth: AuthConfig;
   local_path: string;
   remote_dir: string;
+  remote_name?: string;
+  conflict_strategy?: SftpUploadConflictStrategy;
   transfer_id?: string;
 };
+
+export type SftpUploadConflictStrategy = 'auto_rename' | 'overwrite';
 
 export type SftpRenameRequest = {
   host: string;
