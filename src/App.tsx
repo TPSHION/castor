@@ -7,10 +7,13 @@ import type {
   ConnectRequest,
   ConnectionProfile,
   DeleteConnectionProfileRequest,
+  LocalCreateDirRequest,
+  LocalDeleteRequest,
   LocalFsEntry,
   LocalListRequest,
   LocalListResponse,
   LocalConnectRequest,
+  LocalRenameRequest,
   OutputPayload,
   SessionSummary,
   SftpCreateDirRequest,
@@ -84,6 +87,29 @@ type SftpActionDialogState =
   | {
       kind: 'delete';
       entry: SftpEntry;
+    }
+  | null;
+
+type LocalContextMenuState = {
+  x: number;
+  y: number;
+  entry: LocalFsEntry | null;
+};
+
+type LocalActionDialogState =
+  | {
+      kind: 'rename';
+      entry: LocalFsEntry;
+      value: string;
+    }
+  | {
+      kind: 'create_dir';
+      parentPath: string;
+      value: string;
+    }
+  | {
+      kind: 'delete';
+      entry: LocalFsEntry;
     }
   | null;
 
@@ -292,6 +318,11 @@ export function App() {
   const [localEntries, setLocalEntries] = useState<LocalFsEntry[]>([]);
   const [localBusy, setLocalBusy] = useState(false);
   const [localMessage, setLocalMessage] = useState<string | null>(null);
+  const [localSelectedPath, setLocalSelectedPath] = useState<string | null>(null);
+  const [localContextMenu, setLocalContextMenu] = useState<LocalContextMenuState | null>(null);
+  const [localActionDialog, setLocalActionDialog] = useState<LocalActionDialogState>(null);
+  const [localActionError, setLocalActionError] = useState<string | null>(null);
+  const localContextMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [selectedSftpProfileId, setSelectedSftpProfileId] = useState<string>('');
   const [connectedSftpProfileId, setConnectedSftpProfileId] = useState<string>('');
@@ -357,6 +388,16 @@ export function App() {
   }, [profiles, selectedSftpProfileId, connectedSftpProfileId]);
 
   useEffect(() => {
+    if (!localSelectedPath) {
+      return;
+    }
+    if (localEntries.some((entry) => entry.path === localSelectedPath)) {
+      return;
+    }
+    setLocalSelectedPath(null);
+  }, [localEntries, localSelectedPath]);
+
+  useEffect(() => {
     if (!sftpSelectedPath) {
       return;
     }
@@ -367,8 +408,44 @@ export function App() {
   }, [sftpEntries, sftpSelectedPath]);
 
   useEffect(() => {
+    setLocalContextMenu(null);
     setSftpContextMenu(null);
   }, [contentView]);
+
+  useEffect(() => {
+    if (!localContextMenu) {
+      return;
+    }
+
+    const onMouseDown = (event: MouseEvent) => {
+      if (localContextMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setLocalContextMenu(null);
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setLocalContextMenu(null);
+      }
+    };
+
+    const onViewportChange = () => {
+      setLocalContextMenu(null);
+    };
+
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('resize', onViewportChange);
+    window.addEventListener('scroll', onViewportChange, true);
+
+    return () => {
+      window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('resize', onViewportChange);
+      window.removeEventListener('scroll', onViewportChange, true);
+    };
+  }, [localContextMenu]);
 
   useEffect(() => {
     if (!sftpContextMenu) {
@@ -475,6 +552,8 @@ export function App() {
       setLocalPath(result.path);
       setLocalPathInput(result.path);
       setLocalParentPath(result.parent_path ?? null);
+      setLocalSelectedPath(null);
+      setLocalContextMenu(null);
       setLocalMessage(`本地目录读取成功，共 ${result.entries.length} 项`);
     } catch (invokeError) {
       setLocalMessage(formatInvokeError(invokeError));
@@ -499,6 +578,149 @@ export function App() {
       return;
     }
     await loadLocalDir(entry.path);
+  }
+
+  function closeLocalActionDialog() {
+    if (localBusy) {
+      return;
+    }
+    setLocalActionDialog(null);
+    setLocalActionError(null);
+  }
+
+  function updateLocalActionValue(value: string) {
+    setLocalActionError(null);
+    setLocalActionDialog((current) => {
+      if (!current || current.kind === 'delete') {
+        return current;
+      }
+      return {
+        ...current,
+        value
+      };
+    });
+  }
+
+  function openLocalContextMenuAt(x: number, y: number, entry: LocalFsEntry | null) {
+    setSftpContextMenu(null);
+    setLocalActionDialog(null);
+    setLocalActionError(null);
+    setLocalContextMenu({ x, y, entry });
+  }
+
+  function openLocalRenameDialog(entry: LocalFsEntry) {
+    setLocalContextMenu(null);
+    setLocalActionError(null);
+    setLocalActionDialog({ kind: 'rename', entry, value: entry.name });
+  }
+
+  function openLocalDeleteDialog(entry: LocalFsEntry) {
+    setLocalContextMenu(null);
+    setLocalActionError(null);
+    setLocalActionDialog({ kind: 'delete', entry });
+  }
+
+  function openLocalCreateDirDialog(parentPath: string) {
+    setLocalContextMenu(null);
+    setLocalActionError(null);
+    setLocalActionDialog({ kind: 'create_dir', parentPath, value: '' });
+  }
+
+  async function onLocalRenameEntry(entry: LocalFsEntry, newName: string) {
+    const trimmedName = newName.trim();
+    if (!trimmedName) {
+      setLocalActionError('名称不能为空');
+      return;
+    }
+
+    const request: LocalRenameRequest = {
+      path: entry.path,
+      new_name: trimmedName
+    };
+
+    setLocalBusy(true);
+    setLocalActionError(null);
+    setLocalMessage(`正在重命名：${entry.name}`);
+
+    try {
+      await invoke('local_rename_entry', { request });
+      setLocalActionDialog(null);
+      setLocalSelectedPath(null);
+      setLocalBusy(false);
+      await loadLocalDir(localPath);
+      setLocalMessage(`已重命名为：${trimmedName}`);
+    } catch (invokeError) {
+      setLocalActionError(formatInvokeError(invokeError));
+      setLocalBusy(false);
+    }
+  }
+
+  async function onLocalDeleteEntry(entry: LocalFsEntry) {
+    const request: LocalDeleteRequest = {
+      path: entry.path
+    };
+
+    setLocalBusy(true);
+    setLocalActionError(null);
+    setLocalMessage(`正在删除：${entry.path}`);
+
+    try {
+      await invoke('local_delete_entry', { request });
+      setLocalActionDialog(null);
+      setLocalSelectedPath(null);
+      setLocalBusy(false);
+      await loadLocalDir(localPath);
+      setLocalMessage(`已删除：${entry.name}`);
+    } catch (invokeError) {
+      setLocalActionError(formatInvokeError(invokeError));
+      setLocalBusy(false);
+    }
+  }
+
+  async function onLocalCreateDir(parentPath: string, name: string) {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setLocalActionError('文件夹名称不能为空');
+      return;
+    }
+
+    const request: LocalCreateDirRequest = {
+      parent_path: parentPath,
+      name: trimmedName
+    };
+
+    setLocalBusy(true);
+    setLocalActionError(null);
+    setLocalMessage(`正在创建文件夹：${trimmedName}`);
+
+    try {
+      await invoke('local_create_dir', { request });
+      setLocalActionDialog(null);
+      setLocalBusy(false);
+      await loadLocalDir(localPath);
+      setLocalMessage(`已创建文件夹：${trimmedName}`);
+    } catch (invokeError) {
+      setLocalActionError(formatInvokeError(invokeError));
+      setLocalBusy(false);
+    }
+  }
+
+  async function submitLocalActionDialog() {
+    if (!localActionDialog) {
+      return;
+    }
+
+    if (localActionDialog.kind === 'rename') {
+      await onLocalRenameEntry(localActionDialog.entry, localActionDialog.value);
+      return;
+    }
+
+    if (localActionDialog.kind === 'create_dir') {
+      await onLocalCreateDir(localActionDialog.parentPath, localActionDialog.value);
+      return;
+    }
+
+    await onLocalDeleteEntry(localActionDialog.entry);
   }
 
   async function loadSftpDir(profile: ConnectionProfile, targetPath: string) {
@@ -667,6 +889,7 @@ export function App() {
   }
 
   function openSftpContextMenuAt(x: number, y: number, entry: SftpEntry | null) {
+    setLocalContextMenu(null);
     setSftpActionDialog(null);
     setSftpActionError(null);
     setSftpContextMenu({ x, y, entry });
@@ -1333,7 +1556,17 @@ export function App() {
 
           {localMessage && <p className="status-line">{localMessage}</p>}
 
-          <div className="sftp-table-wrap">
+          <div
+            className="sftp-table-wrap"
+            onContextMenu={(event) => {
+              if (!localPath) {
+                return;
+              }
+              event.preventDefault();
+              setLocalSelectedPath(null);
+              openLocalContextMenuAt(event.clientX, event.clientY, null);
+            }}
+          >
             <table className="sftp-table">
               <thead>
                 <tr>
@@ -1347,6 +1580,12 @@ export function App() {
                 {localParentPath && (
                   <tr
                     className="sftp-entry-row dir parent"
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setLocalSelectedPath(null);
+                      openLocalContextMenuAt(event.clientX, event.clientY, null);
+                    }}
                     onDoubleClick={() => {
                       void onLocalGoParent();
                     }}
@@ -1372,7 +1611,25 @@ export function App() {
                   localEntries.map((entry) => (
                     <tr
                       key={entry.path}
-                      className={entry.is_dir ? 'sftp-entry-row dir' : 'sftp-entry-row'}
+                      className={
+                        entry.is_dir
+                          ? localSelectedPath === entry.path
+                            ? 'sftp-entry-row dir selected'
+                            : 'sftp-entry-row dir'
+                          : localSelectedPath === entry.path
+                            ? 'sftp-entry-row selected'
+                            : 'sftp-entry-row'
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setLocalSelectedPath(entry.path);
+                      }}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setLocalSelectedPath(entry.path);
+                        openLocalContextMenuAt(event.clientX, event.clientY, entry);
+                      }}
                       onDoubleClick={() => {
                         if (entry.is_dir) {
                           void onLocalEnterDir(entry);
@@ -1867,6 +2124,198 @@ export function App() {
     );
   }
 
+  function renderLocalContextMenu() {
+    if (!localContextMenu || contentView !== 'sftp') {
+      return null;
+    }
+
+    const menuWidth = 240;
+    const menuHeight = localContextMenu.entry ? 260 : 128;
+    const left =
+      typeof window === 'undefined'
+        ? localContextMenu.x
+        : Math.max(8, Math.min(localContextMenu.x, window.innerWidth - menuWidth - 8));
+    const top =
+      typeof window === 'undefined'
+        ? localContextMenu.y
+        : Math.max(8, Math.min(localContextMenu.y, window.innerHeight - menuHeight - 8));
+    const entry = localContextMenu.entry;
+
+    return (
+      <div className="sftp-context-layer">
+        <div
+          ref={localContextMenuRef}
+          className="sftp-context-menu"
+          style={{ left, top }}
+          role="menu"
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          {entry ? (
+            <>
+              {entry.is_dir && (
+                <button
+                  type="button"
+                  className="sftp-context-action"
+                  onClick={() => {
+                    setLocalContextMenu(null);
+                    void onLocalEnterDir(entry);
+                  }}
+                >
+                  打开目录
+                </button>
+              )}
+              <button type="button" className="sftp-context-action" onClick={() => openLocalRenameDialog(entry)}>
+                重命名
+              </button>
+              <button
+                type="button"
+                className="sftp-context-action danger"
+                onClick={() => openLocalDeleteDialog(entry)}
+              >
+                删除
+              </button>
+              <div className="sftp-context-separator" />
+              <button
+                type="button"
+                className="sftp-context-action"
+                onClick={() => {
+                  setLocalContextMenu(null);
+                  if (localPath) {
+                    void loadLocalDir(localPath);
+                  }
+                }}
+              >
+                刷新
+              </button>
+              <button
+                type="button"
+                className="sftp-context-action"
+                onClick={() => {
+                  if (localPath) {
+                    openLocalCreateDirDialog(localPath);
+                  }
+                }}
+              >
+                新建文件夹
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="sftp-context-action"
+                onClick={() => {
+                  setLocalContextMenu(null);
+                  if (localPath) {
+                    void loadLocalDir(localPath);
+                  }
+                }}
+              >
+                刷新
+              </button>
+              <button
+                type="button"
+                className="sftp-context-action"
+                onClick={() => {
+                  if (localPath) {
+                    openLocalCreateDirDialog(localPath);
+                  }
+                }}
+              >
+                新建文件夹
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function renderLocalActionDialog() {
+    if (!localActionDialog) {
+      return null;
+    }
+
+    const title =
+      localActionDialog.kind === 'rename'
+        ? '重命名'
+        : localActionDialog.kind === 'create_dir'
+          ? '新建文件夹'
+          : '删除确认';
+    const submitLabel =
+      localActionDialog.kind === 'rename'
+        ? '保存'
+        : localActionDialog.kind === 'create_dir'
+          ? '创建'
+          : '删除';
+
+    return (
+      <div className="editor-modal-overlay" onClick={closeLocalActionDialog}>
+        <section
+          className="editor-modal sftp-action-modal"
+          onClick={(event) => event.stopPropagation()}
+          role="dialog"
+          aria-modal="true"
+          aria-label={title}
+        >
+          <header className="editor-modal-header">
+            <h3>{title}</h3>
+            <button type="button" className="header-action" onClick={closeLocalActionDialog} disabled={localBusy}>
+              关闭
+            </button>
+          </header>
+
+          <div className="editor-modal-body sftp-action-modal-body">
+            {localActionDialog.kind === 'delete' ? (
+              <>
+                <p className="sftp-action-copy">
+                  确认删除{localActionDialog.entry.is_dir ? '目录' : '文件'} <strong>{localActionDialog.entry.name}</strong>？
+                </p>
+                <p className="sftp-action-hint">
+                  {localActionDialog.entry.is_dir ? '目录会递归删除，操作不可撤销。' : '删除后不可撤销。'}
+                </p>
+              </>
+            ) : (
+              <label>
+                {localActionDialog.kind === 'rename' ? '新名称' : '文件夹名称'}
+                <input
+                  value={localActionDialog.value}
+                  autoFocus
+                  disabled={localBusy}
+                  onChange={(event) => updateLocalActionValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      void submitLocalActionDialog();
+                    }
+                  }}
+                />
+              </label>
+            )}
+
+            {localActionError && <p className="status-line error">{localActionError}</p>}
+          </div>
+
+          <footer className="editor-modal-footer">
+            <button type="button" onClick={closeLocalActionDialog} disabled={localBusy}>
+              取消
+            </button>
+            <button
+              type="button"
+              className={localActionDialog.kind === 'delete' ? 'danger' : ''}
+              onClick={() => {
+                void submitLocalActionDialog();
+              }}
+              disabled={localBusy}
+            >
+              {submitLabel}
+            </button>
+          </footer>
+        </section>
+      </div>
+    );
+  }
+
   function renderSftpContextMenu() {
     if (!sftpContextMenu || contentView !== 'sftp') {
       return null;
@@ -2156,12 +2605,22 @@ export function App() {
         </div>
       </header>
 
-      <section className={contentView === 'workspace' ? 'window-body workspace-body' : 'window-body'}>
+      <section
+        className={
+          contentView === 'workspace'
+            ? 'window-body workspace-body'
+            : contentView === 'sftp'
+              ? 'window-body sftp-body'
+              : 'window-body'
+        }
+      >
         {renderBody()}
       </section>
 
       {renderEditorModal()}
       {renderQuickConnectModal()}
+      {renderLocalActionDialog()}
+      {renderLocalContextMenu()}
       {renderSftpActionDialog()}
       {renderSftpContextMenu()}
     </main>

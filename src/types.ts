@@ -97,6 +97,20 @@ export type LocalListRequest = {
   path?: string;
 };
 
+export type LocalRenameRequest = {
+  path: string;
+  new_name: string;
+};
+
+export type LocalDeleteRequest = {
+  path: string;
+};
+
+export type LocalCreateDirRequest = {
+  parent_path: string;
+  name: string;
+};
+
 export type LocalFsEntry = {
   name: string;
   path: string;

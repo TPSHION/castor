@@ -12,6 +12,7 @@
   --ok: #1bd181;
   --danger: #ef6b82;
   --radius: 12px;
+  --dir-panel-height: 520px;
   font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
 }
 
@@ -163,6 +164,10 @@ body {
   background: #c9ced3;
 }
 
+.window-body.sftp-body {
+  overflow: hidden;
+}
+
 .view-page {
   min-height: 100%;
 }
@@ -269,15 +274,30 @@ body {
 .sftp-table-wrap {
   border: 1px solid #445a7f;
   border-radius: 10px;
-  overflow: auto;
-  min-height: 0;
-  max-height: calc(100vh - 280px);
+  overflow: hidden;
+  min-height: var(--dir-panel-height);
+  height: var(--dir-panel-height);
+  max-height: var(--dir-panel-height);
 }
 
 .sftp-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 620px;
+  table-layout: fixed;
+}
+
+.sftp-table thead,
+.sftp-table tbody tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.sftp-table tbody {
+  display: block;
+  height: calc(var(--dir-panel-height) - 42px);
+  overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .sftp-table th,
@@ -286,6 +306,10 @@ body {
   padding: 8px 10px;
   text-align: left;
   font-size: 0.83rem;
+}
+
+.sftp-table td {
+  overflow: hidden;
 }
 
 .sftp-entry-row.dir {
@@ -313,6 +337,14 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+}
+
+.entry-name-cell > span:not(.entry-icon) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .entry-icon {
@@ -370,11 +402,8 @@ body {
 }
 
 .sftp-table th {
-  position: sticky;
-  top: 0;
   background: #233250;
   color: #dbe6fa;
-  z-index: 1;
 }
 
 .sftp-empty-cell {
@@ -941,6 +970,10 @@ button.danger {
     grid-template-columns: 1fr;
   }
 
+  :root {
+    --dir-panel-height: 420px;
+  }
+
   .servers-sidebar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-content: stretch;
@@ -1014,7 +1047,7 @@ button.danger {
 .header-tabs,
 .window-body,
 .editor-modal-body,
-.sftp-table-wrap,
+.sftp-table tbody,
 .terminal-root .xterm-viewport {
   scrollbar-width: thin;
   scrollbar-color: #6e7c99 transparent;
@@ -1023,7 +1056,7 @@ button.danger {
 .header-tabs::-webkit-scrollbar,
 .window-body::-webkit-scrollbar,
 .editor-modal-body::-webkit-scrollbar,
-.sftp-table-wrap::-webkit-scrollbar,
+.sftp-table tbody::-webkit-scrollbar,
 .terminal-root .xterm-viewport::-webkit-scrollbar {
   width: 3px;
   height: 3px;
@@ -1032,7 +1065,7 @@ button.danger {
 .header-tabs::-webkit-scrollbar-thumb,
 .window-body::-webkit-scrollbar-thumb,
 .editor-modal-body::-webkit-scrollbar-thumb,
-.sftp-table-wrap::-webkit-scrollbar-thumb,
+.sftp-table tbody::-webkit-scrollbar-thumb,
 .terminal-root .xterm-viewport::-webkit-scrollbar-thumb {
   background: #6e7c99;
   border-radius: 999px;
@@ -1041,7 +1074,7 @@ button.danger {
 .header-tabs::-webkit-scrollbar-track,
 .window-body::-webkit-scrollbar-track,
 .editor-modal-body::-webkit-scrollbar-track,
-.sftp-table-wrap::-webkit-scrollbar-track,
+.sftp-table tbody::-webkit-scrollbar-track,
 .terminal-root .xterm-viewport::-webkit-scrollbar-track {
   background: transparent;
 }
