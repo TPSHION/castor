@@ -265,6 +265,8 @@ body {
 .sftp-pane > .sftp-path-bar,
 .sftp-pane > .status-line,
 .sftp-pane > .transfer-progress,
+.sftp-pane > .transfer-progress-list,
+.sftp-pane > .transfer-progress-panel-action,
 .sftp-pane > .empty-state,
 .sftp-pane > .sftp-remote-body > .sftp-path-bar {
   margin-inline: 8px;
@@ -373,7 +375,7 @@ body {
   width: 16%;
 }
 
-.sftp-entry-row.dir {
+.sftp-entry-row {
   cursor: pointer;
 }
 
@@ -605,6 +607,25 @@ button.danger {
   gap: 4px;
 }
 
+.transfer-progress-list {
+  display: grid;
+  gap: 6px;
+}
+
+.transfer-progress-panel-action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.transfer-progress-path {
+  margin: 0;
+  color: #8fa4cb;
+  font-size: 0.76rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .transfer-progress-meta {
   display: flex;
   align-items: center;
@@ -648,6 +669,33 @@ button.danger {
 
 .transfer-progress.error .transfer-progress-bar {
   background: linear-gradient(90deg, #d64f6a, #ef6b82);
+}
+
+.transfer-tasks-modal {
+  width: min(760px, calc(100vw - 24px));
+}
+
+.transfer-tasks-modal-body {
+  display: grid;
+  gap: 12px;
+  max-height: min(70vh, 640px);
+  overflow: auto;
+}
+
+.transfer-task-section {
+  display: grid;
+  gap: 8px;
+}
+
+.transfer-task-section h4 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #c4d2ea;
+}
+
+.transfer-task-list {
+  display: grid;
+  gap: 8px;
 }
 
 .host-grid {
@@ -1105,6 +1153,8 @@ button.danger {
   .sftp-pane > .sftp-path-bar,
   .sftp-pane > .status-line,
   .sftp-pane > .transfer-progress,
+  .sftp-pane > .transfer-progress-list,
+  .sftp-pane > .transfer-progress-panel-action,
   .sftp-pane > .empty-state,
   .sftp-pane > .sftp-remote-body > .sftp-path-bar {
     margin-inline: 4px;

@@ -1,4 +1,6 @@
+import { useMemo, useState } from 'react';
 import type { ConnectionProfile, LocalFsEntry, SftpEntry, SftpTransferProgressPayload } from '../types';
+import { TransferTasksPanelModal } from './TransferTasksPanelModal';
 
 type SftpViewProps = {
   profiles: ConnectionProfile[];
@@ -18,8 +20,10 @@ type SftpViewProps = {
   localBusy: boolean;
   localMessage: string | null;
   localSelectedPath: string | null;
-  localTransferProgress: SftpTransferProgressPayload | null;
-  sftpTransferProgress: SftpTransferProgressPayload | null;
+  localTransferProgresses: SftpTransferProgressPayload[];
+  localCompletedTransferProgresses: SftpTransferProgressPayload[];
+  sftpTransferProgresses: SftpTransferProgressPayload[];
+  sftpCompletedTransferProgresses: SftpTransferProgressPayload[];
   formatBytes: (value?: number) => string;
   formatUnixTime: (value?: number) => string;
   onSelectSftpProfile: (profileId: string) => void;
@@ -41,10 +45,10 @@ type SftpViewProps = {
   onLocalSelectPath: (path: string) => void;
   onOpenLocalContextMenu: (x: number, y: number, entry: LocalFsEntry | null) => void;
   onOpenCreateEditor: () => void;
-  canCancelUpload: boolean;
-  onCancelUpload: () => void;
-  canCancelDownload: boolean;
-  onCancelDownload: () => void;
+  onCancelUpload: (transferId: string) => void;
+  onCancelDownload: (transferId: string) => void;
+  onClearLocalCompletedTransfers: () => void;
+  onClearSftpCompletedTransfers: () => void;
 };
 
 export function SftpView({
@@ -65,8 +69,10 @@ export function SftpView({
   localBusy,
   localMessage,
   localSelectedPath,
-  localTransferProgress,
-  sftpTransferProgress,
+  localTransferProgresses,
+  localCompletedTransferProgresses,
+  sftpTransferProgresses,
+  sftpCompletedTransferProgresses,
   formatBytes,
   formatUnixTime,
   onSelectSftpProfile,
@@ -88,11 +94,14 @@ export function SftpView({
   onLocalSelectPath,
   onOpenLocalContextMenu,
   onOpenCreateEditor,
-  canCancelUpload,
   onCancelUpload,
-  canCancelDownload,
-  onCancelDownload
+  onCancelDownload,
+  onClearLocalCompletedTransfers,
+  onClearSftpCompletedTransfers
 }: SftpViewProps) {
+  const [isLocalTasksPanelOpen, setLocalTasksPanelOpen] = useState(false);
+  const [isSftpTasksPanelOpen, setSftpTasksPanelOpen] = useState(false);
+
   const formatEta = (value?: number | null) => {
     if (value === null || value === undefined || !Number.isFinite(value)) {
       return '计算中...';
@@ -129,6 +138,9 @@ export function SftpView({
               : '下载中';
     return (
       <div className={payload.status === 'error' ? 'transfer-progress error' : 'transfer-progress'}>
+        <p className="transfer-progress-path" title={payload.path}>
+          {payload.path}
+        </p>
         <div className="transfer-progress-meta">
           <span>
             {title} {payload.percent}%
@@ -140,16 +152,24 @@ export function SftpView({
         <div className="transfer-progress-track">
           <div className="transfer-progress-bar" style={{ width: `${payload.percent}%` }} />
         </div>
-        {kind === 'upload' && payload.status === 'running' && canCancelUpload && (
+        {kind === 'upload' && payload.status === 'running' && (
           <div className="transfer-progress-actions">
-            <button type="button" className="transfer-progress-cancel" onClick={onCancelUpload}>
+            <button
+              type="button"
+              className="transfer-progress-cancel"
+              onClick={() => onCancelUpload(payload.transfer_id)}
+            >
               取消上传
             </button>
           </div>
         )}
-        {kind === 'download' && payload.status === 'running' && canCancelDownload && (
+        {kind === 'download' && payload.status === 'running' && (
           <div className="transfer-progress-actions">
-            <button type="button" className="transfer-progress-cancel" onClick={onCancelDownload}>
+            <button
+              type="button"
+              className="transfer-progress-cancel"
+              onClick={() => onCancelDownload(payload.transfer_id)}
+            >
               取消下载
             </button>
           </div>
@@ -163,6 +183,19 @@ export function SftpView({
       </div>
     );
   };
+
+  const localRunningTasks = useMemo(
+    () => localTransferProgresses.filter((task) => task.status === 'running'),
+    [localTransferProgresses]
+  );
+  const sftpRunningTasks = useMemo(
+    () => sftpTransferProgresses.filter((task) => task.status === 'running'),
+    [sftpTransferProgresses]
+  );
+  const localPrimaryTask = localRunningTasks[0] ?? null;
+  const sftpPrimaryTask = sftpRunningTasks[0] ?? null;
+  const localPanelButtonVisible = localRunningTasks.length > 1 || localCompletedTransferProgresses.length > 0;
+  const sftpPanelButtonVisible = sftpRunningTasks.length > 1 || sftpCompletedTransferProgresses.length > 0;
 
   return (
     <div className="sftp-dual-page">
@@ -202,7 +235,14 @@ export function SftpView({
         </div>
 
         {localMessage && <p className="status-line">{localMessage}</p>}
-        {localTransferProgress && renderProgress(localTransferProgress, 'upload')}
+        {localPrimaryTask && renderProgress(localPrimaryTask, 'upload')}
+        {localPanelButtonVisible && (
+          <div className="transfer-progress-panel-action">
+            <button type="button" onClick={() => setLocalTasksPanelOpen(true)}>
+              查看任务面板（进行中 {localRunningTasks.length} · 已完成 {localCompletedTransferProgresses.length}）
+            </button>
+          </div>
+        )}
 
         <div
           className="sftp-table-wrap"
@@ -326,7 +366,14 @@ export function SftpView({
         </div>
 
         {sftpMessage && <p className="status-line">{sftpMessage}</p>}
-        {sftpTransferProgress && renderProgress(sftpTransferProgress, 'download')}
+        {sftpPrimaryTask && renderProgress(sftpPrimaryTask, 'download')}
+        {sftpPanelButtonVisible && (
+          <div className="transfer-progress-panel-action">
+            <button type="button" onClick={() => setSftpTasksPanelOpen(true)}>
+              查看任务面板（进行中 {sftpRunningTasks.length} · 已完成 {sftpCompletedTransferProgresses.length}）
+            </button>
+          </div>
+        )}
 
         {profiles.length === 0 ? (
           <div className="empty-state">
@@ -469,6 +516,31 @@ export function SftpView({
           </div>
         )}
       </section>
+
+      <TransferTasksPanelModal
+        isOpen={isLocalTasksPanelOpen}
+        title="上传任务面板"
+        kind="upload"
+        runningTasks={localRunningTasks}
+        completedTasks={localCompletedTransferProgresses}
+        formatBytes={formatBytes}
+        formatEta={formatEta}
+        onCancelTask={onCancelUpload}
+        onClearCompleted={onClearLocalCompletedTransfers}
+        onClose={() => setLocalTasksPanelOpen(false)}
+      />
+      <TransferTasksPanelModal
+        isOpen={isSftpTasksPanelOpen}
+        title="下载任务面板"
+        kind="download"
+        runningTasks={sftpRunningTasks}
+        completedTasks={sftpCompletedTransferProgresses}
+        formatBytes={formatBytes}
+        formatEta={formatEta}
+        onCancelTask={onCancelDownload}
+        onClearCompleted={onClearSftpCompletedTransfers}
+        onClose={() => setSftpTasksPanelOpen(false)}
+      />
     </div>
   );
 }
