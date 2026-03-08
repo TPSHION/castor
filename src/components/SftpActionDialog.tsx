@@ -64,6 +64,10 @@ export function SftpActionDialog({
               <input
                 value={dialog.value}
                 autoFocus
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 disabled={busy}
                 placeholder={dialog.kind === 'permissions' ? '755' : ''}
                 onChange={(event) => onChangeValue(event.target.value)}

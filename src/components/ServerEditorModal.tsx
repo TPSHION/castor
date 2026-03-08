@@ -52,6 +52,10 @@ export function ServerEditorModal({
               名称
               <input
                 value={editor.name}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 onChange={(event) => setEditor((prev) => ({ ...prev, name: event.target.value }))}
                 placeholder="如：生产服务器"
               />
@@ -61,6 +65,10 @@ export function ServerEditorModal({
               Host
               <input
                 value={editor.host}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 onChange={(event) => setEditor((prev) => ({ ...prev, host: event.target.value }))}
                 placeholder="server.example.com"
               />
@@ -73,6 +81,10 @@ export function ServerEditorModal({
                 min={1}
                 max={65535}
                 value={editor.port}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 onChange={(event) =>
                   setEditor((prev) => ({
                     ...prev,
@@ -86,6 +98,10 @@ export function ServerEditorModal({
               用户名
               <input
                 value={editor.username}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 onChange={(event) => setEditor((prev) => ({ ...prev, username: event.target.value }))}
                 placeholder="root"
               />
@@ -116,6 +132,9 @@ export function ServerEditorModal({
                 value={editor.password}
                 onChange={(event) => setEditor((prev) => ({ ...prev, password: event.target.value }))}
                 autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
               />
             </label>
           ) : (
@@ -125,6 +144,10 @@ export function ServerEditorModal({
                 <textarea
                   rows={6}
                   value={editor.privateKey}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   onChange={(event) => setEditor((prev) => ({ ...prev, privateKey: event.target.value }))}
                   placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
                 />
@@ -136,6 +159,9 @@ export function ServerEditorModal({
                   value={editor.passphrase}
                   onChange={(event) => setEditor((prev) => ({ ...prev, passphrase: event.target.value }))}
                   autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                 />
               </label>
             </>

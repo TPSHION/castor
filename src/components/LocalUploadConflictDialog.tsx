@@ -59,6 +59,10 @@ export function LocalUploadConflictDialog({
               value={manualName}
               disabled={busy}
               autoFocus
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
               onChange={(event) => onChangeManualName(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {

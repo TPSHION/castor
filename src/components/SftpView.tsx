@@ -182,6 +182,10 @@ export function SftpView({
         <div className="sftp-path-bar">
           <input
             value={localPathInput}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
             onChange={(event) => onLocalPathInputChange(event.target.value)}
             placeholder="本地路径"
             disabled={localBusy}
@@ -350,6 +354,10 @@ export function SftpView({
               </button>
               <input
                 value={sftpPathInput}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 onChange={(event) => onSftpPathInputChange(event.target.value)}
                 placeholder="/"
                 disabled={sftpBusy}

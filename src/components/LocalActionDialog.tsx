@@ -56,6 +56,10 @@ export function LocalActionDialog({
               <input
                 value={dialog.value}
                 autoFocus
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 disabled={busy}
                 onChange={(event) => onChangeValue(event.target.value)}
                 onKeyDown={(event) => {
