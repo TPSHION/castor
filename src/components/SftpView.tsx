@@ -203,35 +203,10 @@ export function SftpView({
         <div className="sftp-pane-header">
           <h2>Local</h2>
           <div className="section-actions">
-            <button type="button" onClick={onLocalGoParent} disabled={!localParentPath || localBusy}>
-              上级目录
-            </button>
             <button type="button" onClick={onRefreshLocalDir} disabled={localBusy}>
               刷新
             </button>
           </div>
-        </div>
-
-        <div className="sftp-path-bar">
-          <input
-            value={localPathInput}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="none"
-            spellCheck={false}
-            onChange={(event) => onLocalPathInputChange(event.target.value)}
-            placeholder="本地路径"
-            disabled={localBusy}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                onLocalOpenPath();
-              }
-            }}
-          />
-          <button type="button" onClick={onLocalOpenPath} disabled={localBusy}>
-            打开
-          </button>
         </div>
 
         {localMessage && <p className="status-line">{localMessage}</p>}
@@ -244,96 +219,123 @@ export function SftpView({
           </div>
         )}
 
-        <div
-          className="sftp-table-wrap"
-          onContextMenu={(event) => {
-            if (!localPath) {
-              return;
-            }
-            event.preventDefault();
-            onOpenLocalContextMenu(event.clientX, event.clientY, null);
-          }}
-        >
-          <table className="sftp-table">
-            <thead>
-              <tr>
-                <th>名称</th>
-                <th>修改时间</th>
-                <th>大小</th>
-                <th>类型</th>
-              </tr>
-            </thead>
-            <tbody>
-              {localParentPath && (
-                <tr
-                  className="sftp-entry-row dir parent"
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onOpenLocalContextMenu(event.clientX, event.clientY, null);
-                  }}
-                  onDoubleClick={onLocalGoParent}
-                >
-                  <td>
-                    <div className="entry-name-cell">
-                      <span className="entry-icon dir" aria-hidden="true" />
-                      <span>..</span>
-                    </div>
-                  </td>
-                  <td>-</td>
-                  <td>-</td>
-                  <td>folder</td>
-                </tr>
-              )}
-              {localEntries.length === 0 ? (
+        <div className="sftp-remote-body">
+          <div className="sftp-path-bar sftp-path-bar-remote">
+            <button type="button" onClick={onLocalGoParent} disabled={!localParentPath || localBusy}>
+              上级
+            </button>
+            <input
+              value={localPathInput}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              onChange={(event) => onLocalPathInputChange(event.target.value)}
+              placeholder="本地路径"
+              disabled={localBusy}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  onLocalOpenPath();
+                }
+              }}
+            />
+            <button type="button" onClick={onLocalOpenPath} disabled={localBusy}>
+              打开
+            </button>
+          </div>
+
+          <div
+            className="sftp-table-wrap"
+            onContextMenu={(event) => {
+              if (!localPath) {
+                return;
+              }
+              event.preventDefault();
+              onOpenLocalContextMenu(event.clientX, event.clientY, null);
+            }}
+          >
+            <table className="sftp-table">
+              <thead>
                 <tr>
-                  <td colSpan={4} className="sftp-empty-cell">
-                    当前本地目录为空
-                  </td>
+                  <th>名称</th>
+                  <th>修改时间</th>
+                  <th>大小</th>
+                  <th>类型</th>
                 </tr>
-              ) : (
-                localEntries.map((entry) => (
+              </thead>
+              <tbody>
+                {localParentPath && (
                   <tr
-                    key={entry.path}
-                    className={
-                      entry.is_dir
-                        ? localSelectedPath === entry.path
-                          ? 'sftp-entry-row dir selected'
-                          : 'sftp-entry-row dir'
-                        : localSelectedPath === entry.path
-                          ? 'sftp-entry-row selected'
-                          : 'sftp-entry-row'
-                    }
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onLocalSelectPath(entry.path);
-                    }}
+                    className="sftp-entry-row dir parent"
                     onContextMenu={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
-                      onLocalSelectPath(entry.path);
-                      onOpenLocalContextMenu(event.clientX, event.clientY, entry);
+                      onOpenLocalContextMenu(event.clientX, event.clientY, null);
                     }}
-                    onDoubleClick={() => {
-                      if (entry.is_dir) {
-                        onLocalEnterDir(entry);
-                      }
-                    }}
+                    onDoubleClick={onLocalGoParent}
                   >
                     <td>
                       <div className="entry-name-cell">
-                        <span className={entry.is_dir ? 'entry-icon dir' : 'entry-icon file'} aria-hidden="true" />
-                        <span>{entry.name}</span>
+                        <span className="entry-icon dir" aria-hidden="true" />
+                        <span>..</span>
                       </div>
                     </td>
-                    <td>{formatUnixTime(entry.modified)}</td>
-                    <td>{entry.is_dir ? '-' : formatBytes(entry.size)}</td>
-                    <td>{entry.is_dir ? 'folder' : 'file'}</td>
+                    <td>-</td>
+                    <td>-</td>
+                    <td>folder</td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                )}
+                {localEntries.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="sftp-empty-cell">
+                      当前本地目录为空
+                    </td>
+                  </tr>
+                ) : (
+                  localEntries.map((entry) => (
+                    <tr
+                      key={entry.path}
+                      className={
+                        entry.is_dir
+                          ? localSelectedPath === entry.path
+                            ? 'sftp-entry-row dir selected'
+                            : 'sftp-entry-row dir'
+                          : localSelectedPath === entry.path
+                            ? 'sftp-entry-row selected'
+                            : 'sftp-entry-row'
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onLocalSelectPath(entry.path);
+                      }}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onLocalSelectPath(entry.path);
+                        onOpenLocalContextMenu(event.clientX, event.clientY, entry);
+                      }}
+                      onDoubleClick={() => {
+                        if (entry.is_dir) {
+                          onLocalEnterDir(entry);
+                        }
+                      }}
+                    >
+                      <td>
+                        <div className="entry-name-cell">
+                          <span className={entry.is_dir ? 'entry-icon dir' : 'entry-icon file'} aria-hidden="true" />
+                          <span>{entry.name}</span>
+                        </div>
+                      </td>
+                      <td>{formatUnixTime(entry.modified)}</td>
+                      <td>{entry.is_dir ? '-' : formatBytes(entry.size)}</td>
+                      <td>{entry.is_dir ? 'folder' : 'file'}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 

@@ -102,8 +102,8 @@ export function App() {
 
   const [selectedSftpProfileId, setSelectedSftpProfileId] = useState<string>('');
   const [connectedSftpProfileId, setConnectedSftpProfileId] = useState<string>('');
-  const [sftpPath, setSftpPath] = useState<string>('/');
-  const [sftpPathInput, setSftpPathInput] = useState<string>('/');
+  const [sftpPath, setSftpPath] = useState<string>('/root');
+  const [sftpPathInput, setSftpPathInput] = useState<string>('/root');
   const [sftpEntries, setSftpEntries] = useState<SftpEntry[]>([]);
   const [sftpBusy, setSftpBusy] = useState(false);
   const [sftpMessage, setSftpMessage] = useState<string | null>(null);
@@ -945,8 +945,8 @@ export function App() {
     if (connectedSftpProfileId && connectedSftpProfileId !== profileId) {
       setConnectedSftpProfileId('');
       setSftpEntries([]);
-      setSftpPath('/');
-      setSftpPathInput('/');
+      setSftpPath('/root');
+      setSftpPathInput('/root');
       setSftpMessage('已切换服务器，请点击“连接”加载远程目录。');
     }
   }
@@ -956,7 +956,7 @@ export function App() {
       setSftpMessage('请先选择服务器。');
       return;
     }
-    await loadSftpDir(selectedSftpProfile, '/');
+    await loadSftpDir(selectedSftpProfile, '/root');
   }
 
   async function onOpenSftpPath() {
@@ -1349,8 +1349,8 @@ export function App() {
     const name = connectedSftpProfile.name;
     setConnectedSftpProfileId('');
     setSftpEntries([]);
-    setSftpPath('/');
-    setSftpPathInput('/');
+    setSftpPath('/root');
+    setSftpPathInput('/root');
     setSftpSelectedPath(null);
     setSftpContextMenu(null);
     setSftpActionDialog(null);
