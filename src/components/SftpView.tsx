@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { listen, TauriEvent } from '@tauri-apps/api/event';
 import type { ConnectionProfile, LocalFsEntry, SftpEntry, SftpTransferProgressPayload } from '../types';
 import { TransferTasksPanelModal } from './TransferTasksPanelModal';
 
 type SftpViewProps = {
+  isActive: boolean;
   profiles: ConnectionProfile[];
   selectedSftpProfileId: string;
   selectedSftpProfile: ConnectionProfile | null;
@@ -51,9 +53,11 @@ type SftpViewProps = {
   onClearSftpCompletedTransfers: () => void;
   onUploadLocalEntryToRemote: (entry: LocalFsEntry) => void;
   onDownloadRemoteEntryToLocal: (entry: SftpEntry) => void;
+  onUploadSystemPathsToRemote: (paths: string[]) => void;
 };
 
 export function SftpView({
+  isActive,
   profiles,
   selectedSftpProfileId,
   selectedSftpProfile,
@@ -101,12 +105,16 @@ export function SftpView({
   onClearLocalCompletedTransfers,
   onClearSftpCompletedTransfers,
   onUploadLocalEntryToRemote,
-  onDownloadRemoteEntryToLocal
+  onDownloadRemoteEntryToLocal,
+  onUploadSystemPathsToRemote
 }: SftpViewProps) {
   const [isLocalTasksPanelOpen, setLocalTasksPanelOpen] = useState(false);
   const [isSftpTasksPanelOpen, setSftpTasksPanelOpen] = useState(false);
   const [isLocalDropActive, setLocalDropActive] = useState(false);
   const [isRemoteDropActive, setRemoteDropActive] = useState(false);
+  const [isSystemRemoteDropActive, setSystemRemoteDropActive] = useState(false);
+  const systemRemoteDropActiveRef = useRef(false);
+  const uploadSystemPathsToRemoteRef = useRef(onUploadSystemPathsToRemote);
   const [isDragInteractionActive, setDragInteractionActive] = useState(false);
   const [dragPayload, setDragPayload] = useState<{ source: 'local' | 'remote'; path: string; name: string } | null>(null);
   const [dragPointer, setDragPointer] = useState<{ x: number; y: number } | null>(null);
@@ -126,6 +134,43 @@ export function SftpView({
     }
     const rect = element.getBoundingClientRect();
     return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  };
+
+  const setSystemRemoteDropState = (active: boolean) => {
+    systemRemoteDropActiveRef.current = active;
+    setSystemRemoteDropActive(active);
+  };
+
+  const isPointInRemoteDropZone = (x: number, y: number) => {
+    const scale = window.devicePixelRatio || 1;
+    return (
+      isPointInElement(remoteDropZoneRef.current, x, y) ||
+      isPointInElement(remoteDropZoneRef.current, x / scale, y / scale) ||
+      isPointInElement(remoteDropZoneRef.current, x * scale, y * scale)
+    );
+  };
+
+  const uploadSystemPaths = (paths: string[]) => {
+    const validPaths = Array.from(
+      new Set(
+        paths
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0)
+      )
+    );
+    if (validPaths.length === 0) {
+      return;
+    }
+    uploadSystemPathsToRemoteRef.current(validPaths);
+  };
+
+  const hasDraggedFiles = (event: React.DragEvent) => Array.from(event.dataTransfer.types).includes('Files');
+
+  const extractDroppedPaths = (event: React.DragEvent): string[] => {
+    const files = Array.from(event.dataTransfer.files ?? []);
+    return files
+      .map((file) => (file as File & { path?: string }).path ?? '')
+      .filter((value) => value.length > 0);
   };
 
   const updateDropState = (source: 'local' | 'remote', x: number, y: number) => {
@@ -223,6 +268,79 @@ export function SftpView({
       window.removeEventListener('mouseup', onMouseUp);
     };
   }, [dragPayload, localEntries, onDownloadRemoteEntryToLocal, onUploadLocalEntryToRemote, sftpEntries]);
+
+  useEffect(() => {
+    uploadSystemPathsToRemoteRef.current = onUploadSystemPathsToRemote;
+  }, [onUploadSystemPathsToRemote]);
+
+  useEffect(() => {
+    let disposed = false;
+    const unlisteners: Array<() => void> = [];
+
+    const bindDragDrop = async () => {
+      const unlistenEnter = await listen<{ position?: { x: number; y: number } }>(TauriEvent.DRAG_ENTER, (event) => {
+        if (!isActive || !connectedSftpProfile) {
+          setSystemRemoteDropState(false);
+          return;
+        }
+        const position = event.payload?.position;
+        if (!position) {
+          return;
+        }
+        setSystemRemoteDropState(isPointInRemoteDropZone(position.x, position.y));
+      });
+      const unlistenOver = await listen<{ position?: { x: number; y: number } }>(TauriEvent.DRAG_OVER, (event) => {
+        if (!isActive || !connectedSftpProfile) {
+          setSystemRemoteDropState(false);
+          return;
+        }
+        const position = event.payload?.position;
+        if (!position) {
+          return;
+        }
+        setSystemRemoteDropState(isPointInRemoteDropZone(position.x, position.y));
+      });
+      const unlistenLeave = await listen(TauriEvent.DRAG_LEAVE, () => {
+        setSystemRemoteDropState(false);
+      });
+      const unlistenDrop = await listen<{ position?: { x: number; y: number }; paths?: string[] }>(
+        TauriEvent.DRAG_DROP,
+        (event) => {
+          if (!isActive || !connectedSftpProfile) {
+            setSystemRemoteDropState(false);
+            return;
+          }
+          const paths = Array.isArray(event.payload?.paths) ? event.payload.paths : [];
+          const position = event.payload?.position;
+          const isOverRemote = position
+            ? isPointInRemoteDropZone(position.x, position.y)
+            : systemRemoteDropActiveRef.current;
+          setSystemRemoteDropState(false);
+          if (isOverRemote) {
+            uploadSystemPaths(paths);
+          }
+        }
+      );
+
+      if (disposed) {
+        unlistenEnter();
+        unlistenOver();
+        unlistenLeave();
+        unlistenDrop();
+        return;
+      }
+
+      unlisteners.push(unlistenEnter, unlistenOver, unlistenLeave, unlistenDrop);
+    };
+
+    void bindDragDrop();
+
+    return () => {
+      disposed = true;
+      setSystemRemoteDropState(false);
+      unlisteners.forEach((unlisten) => unlisten());
+    };
+  }, [connectedSftpProfile, isActive]);
 
   useEffect(() => {
     if (!isDragInteractionActive) {
@@ -565,9 +683,45 @@ export function SftpView({
               </button>
             </div>
 
-            <div
+              <div
               ref={remoteDropZoneRef}
-              className={isRemoteDropActive ? 'sftp-table-wrap drag-over' : 'sftp-table-wrap'}
+              className={isRemoteDropActive || isSystemRemoteDropActive ? 'sftp-table-wrap drag-over' : 'sftp-table-wrap'}
+              onDragEnter={(event) => {
+                if (!connectedSftpProfile || !hasDraggedFiles(event)) {
+                  return;
+                }
+                event.preventDefault();
+                setSystemRemoteDropState(true);
+              }}
+              onDragOver={(event) => {
+                if (!connectedSftpProfile || !hasDraggedFiles(event)) {
+                  return;
+                }
+                event.preventDefault();
+                setSystemRemoteDropState(true);
+              }}
+              onDragLeave={(event) => {
+                if (!connectedSftpProfile) {
+                  return;
+                }
+                event.preventDefault();
+                const relatedTarget = event.relatedTarget as Node | null;
+                if (!relatedTarget || !remoteDropZoneRef.current?.contains(relatedTarget)) {
+                  setSystemRemoteDropState(false);
+                }
+              }}
+              onDrop={(event) => {
+                if (!connectedSftpProfile) {
+                  return;
+                }
+                event.preventDefault();
+                event.stopPropagation();
+                setSystemRemoteDropState(false);
+                const droppedPaths = extractDroppedPaths(event);
+                if (droppedPaths.length > 0) {
+                  uploadSystemPaths(droppedPaths);
+                }
+              }}
               onContextMenu={(event) => {
                 if (!connectedSftpProfile) {
                   return;

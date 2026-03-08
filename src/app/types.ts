@@ -91,6 +91,7 @@ export type LocalUploadConflictDialogState =
       localEntry: LocalFsEntry;
       remoteEntry: SftpEntry;
       remoteDir: string;
+      source?: 'local' | 'system';
     }
   | null;
 

@@ -98,6 +98,10 @@ export function App() {
   const [localCompletedTransferProgresses, setLocalCompletedTransferProgresses] = useState<SftpTransferProgressPayload[]>([]);
   const localTransferStartedAtRef = useRef<Record<string, number>>({});
   const localTransferClearTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const localDismissedCompletedTransferIdsRef = useRef<Set<string>>(new Set());
+  const recentSystemDropRef = useRef<{ signature: string; at: number } | null>(null);
+  const pendingSystemUploadQueueRef = useRef<LocalFsEntry[]>([]);
+  const processingSystemUploadQueueRef = useRef(false);
   const localContextMenuRef = useRef<HTMLDivElement>(null);
 
   const [selectedSftpProfileId, setSelectedSftpProfileId] = useState<string>('');
@@ -115,6 +119,7 @@ export function App() {
   const [sftpCompletedTransferProgresses, setSftpCompletedTransferProgresses] = useState<SftpTransferProgressPayload[]>([]);
   const sftpTransferStartedAtRef = useRef<Record<string, number>>({});
   const sftpTransferClearTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const sftpDismissedCompletedTransferIdsRef = useRef<Set<string>>(new Set());
   const sftpContextMenuRef = useRef<HTMLDivElement>(null);
 
   const [sessionTabs, setSessionTabs] = useState<SessionTab[]>([]);
@@ -161,6 +166,19 @@ export function App() {
       }
       index += 1;
     }
+  }
+
+  function localNameFromPath(path: string) {
+    const trimmed = path.trim();
+    if (!trimmed) {
+      return '';
+    }
+    const normalized = trimmed.replace(/[\\/]+$/, '');
+    if (!normalized) {
+      return trimmed;
+    }
+    const parts = normalized.split(/[\\/]/).filter(Boolean);
+    return parts[parts.length - 1] ?? normalized;
   }
 
   function upsertTransferProgress(
@@ -243,6 +261,7 @@ export function App() {
   function applyLocalTransferProgress(payload: SftpTransferProgressPayload) {
     const transferId = payload.transfer_id;
     if (payload.status === 'running') {
+      localDismissedCompletedTransferIdsRef.current.delete(transferId);
       clearLocalTransferTimer(transferId);
       if (!localTransferStartedAtRef.current[transferId]) {
         localTransferStartedAtRef.current[transferId] = Date.now();
@@ -250,6 +269,11 @@ export function App() {
       const nextPayload = withTransferMetrics(payload, localTransferStartedAtRef.current[transferId]);
       setLocalTransferProgresses((previous) => upsertTransferProgress(previous, nextPayload));
       setLocalCompletedTransferProgresses((previous) => previous.filter((item) => item.transfer_id !== transferId));
+      return;
+    }
+
+    if (localDismissedCompletedTransferIdsRef.current.has(transferId)) {
+      setLocalTransferProgresses((previous) => previous.filter((item) => item.transfer_id !== transferId));
       return;
     }
 
@@ -270,6 +294,7 @@ export function App() {
   function applySftpTransferProgress(payload: SftpTransferProgressPayload) {
     const transferId = payload.transfer_id;
     if (payload.status === 'running') {
+      sftpDismissedCompletedTransferIdsRef.current.delete(transferId);
       clearSftpTransferTimer(transferId);
       if (!sftpTransferStartedAtRef.current[transferId]) {
         sftpTransferStartedAtRef.current[transferId] = Date.now();
@@ -277,6 +302,11 @@ export function App() {
       const nextPayload = withTransferMetrics(payload, sftpTransferStartedAtRef.current[transferId]);
       setSftpTransferProgresses((previous) => upsertTransferProgress(previous, nextPayload));
       setSftpCompletedTransferProgresses((previous) => previous.filter((item) => item.transfer_id !== transferId));
+      return;
+    }
+
+    if (sftpDismissedCompletedTransferIdsRef.current.has(transferId)) {
+      setSftpTransferProgresses((previous) => previous.filter((item) => item.transfer_id !== transferId));
       return;
     }
 
@@ -334,6 +364,8 @@ export function App() {
       setLocalUploadConflictDialog(null);
       setLocalUploadConflictRenameValue('');
       setLocalUploadConflictError(null);
+      pendingSystemUploadQueueRef.current = [];
+      processingSystemUploadQueueRef.current = false;
       clearLocalTransferTimer();
       clearSftpTransferTimer();
       localTransferStartedAtRef.current = {};
@@ -359,6 +391,8 @@ export function App() {
       setLocalUploadConflictDialog(null);
       setLocalUploadConflictRenameValue('');
       setLocalUploadConflictError(null);
+      pendingSystemUploadQueueRef.current = [];
+      processingSystemUploadQueueRef.current = false;
       clearSftpTransferTimer();
       sftpTransferStartedAtRef.current = {};
       setSftpTransferProgresses([]);
@@ -621,9 +655,13 @@ export function App() {
     if (localBusy) {
       return;
     }
+    const fromSystemQueue = localUploadConflictDialog?.source === 'system';
     setLocalUploadConflictDialog(null);
     setLocalUploadConflictRenameValue('');
     setLocalUploadConflictError(null);
+    if (fromSystemQueue) {
+      void processPendingSystemUploads();
+    }
   }
 
   function updateLocalActionValue(value: string) {
@@ -799,6 +837,154 @@ export function App() {
     }
   }
 
+  async function uploadSystemPathToTarget(localPathValue: string) {
+    if (!connectedSftpProfile) {
+      setLocalMessage('请先连接服务器。');
+      return;
+    }
+
+    const auth = buildAuthFromProfile(connectedSftpProfile);
+    if (!auth) {
+      setLocalMessage(`服务器 ${connectedSftpProfile.name} 缺少可用凭据，请先编辑并保存。`);
+      return;
+    }
+
+    const sourcePath = localPathValue.trim();
+    if (!sourcePath) {
+      return;
+    }
+
+    const transferId = createTransferId();
+    clearLocalTransferTimer(transferId);
+    localTransferStartedAtRef.current[transferId] = Date.now();
+    applyLocalTransferProgress({
+      transfer_id: transferId,
+      direction: 'upload',
+      status: 'running',
+      path: sourcePath,
+      target_path: sftpPath,
+      transferred_bytes: 0,
+      total_bytes: 0,
+      percent: 0
+    });
+    setLocalMessage(`正在上传到目标目录：${sourcePath}`);
+
+    const remoteName = localNameFromPath(sourcePath);
+    const request: SftpUploadRequest = {
+      host: connectedSftpProfile.host,
+      port: connectedSftpProfile.port,
+      username: connectedSftpProfile.username,
+      auth,
+      local_path: sourcePath,
+      remote_dir: sftpPath,
+      remote_name: remoteName || undefined,
+      conflict_strategy: 'auto_rename',
+      transfer_id: transferId
+    };
+
+    try {
+      const result = await invoke<SftpUploadResult>('sftp_upload_path', { request });
+      setLocalMessage(`已上传到目标目录：${result.remote_path}（${formatBytes(result.bytes)}）`);
+      await loadSftpDir(connectedSftpProfile, sftpPath, {
+        silent: true,
+        background: true
+      });
+    } catch (invokeError) {
+      const message = formatInvokeError(invokeError);
+      setLocalMessage(message);
+      if (!message.includes('已取消')) {
+        applyLocalTransferProgress({
+          transfer_id: transferId,
+          direction: 'upload',
+          status: 'error',
+          path: sourcePath,
+          target_path: sftpPath,
+          transferred_bytes: 0,
+          total_bytes: 0,
+          percent: 0
+        });
+      }
+    }
+  }
+
+  async function processPendingSystemUploads() {
+    if (processingSystemUploadQueueRef.current || localUploadConflictDialog) {
+      return;
+    }
+    processingSystemUploadQueueRef.current = true;
+
+    try {
+      while (pendingSystemUploadQueueRef.current.length > 0) {
+        const entry = pendingSystemUploadQueueRef.current.shift();
+        if (!entry) {
+          continue;
+        }
+
+        const conflict = sftpEntries.find((item) => item.name === entry.name) ?? null;
+        if (conflict) {
+          setLocalContextMenu(null);
+          setLocalUploadConflictRenameValue(suggestRemoteName(entry.name));
+          setLocalUploadConflictError(null);
+          setLocalUploadConflictDialog({
+            localEntry: entry,
+            remoteEntry: conflict,
+            remoteDir: sftpPath,
+            source: 'system'
+          });
+          setLocalMessage('目标目录存在同名项，请选择上传策略。');
+          return;
+        }
+
+        await uploadSystemPathToTarget(entry.path);
+      }
+    } finally {
+      processingSystemUploadQueueRef.current = false;
+    }
+  }
+
+  function onUploadSystemPathsToRemote(paths: string[]) {
+    if (!connectedSftpProfile) {
+      setLocalMessage('请先连接服务器。');
+      return;
+    }
+
+    const uniquePaths = Array.from(
+      new Set(
+        paths
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0)
+      )
+    );
+    if (uniquePaths.length === 0) {
+      return;
+    }
+
+    const signature = uniquePaths.join('\n');
+    const now = Date.now();
+    if (recentSystemDropRef.current && recentSystemDropRef.current.signature === signature && now - recentSystemDropRef.current.at < 1200) {
+      return;
+    }
+    recentSystemDropRef.current = { signature, at: now };
+
+    const entries: LocalFsEntry[] = uniquePaths
+      .map((path) => {
+        const name = localNameFromPath(path);
+        return {
+          name,
+          path,
+          is_dir: false
+        };
+      })
+      .filter((entry) => entry.name.length > 0);
+    if (entries.length === 0) {
+      return;
+    }
+
+    pendingSystemUploadQueueRef.current.push(...entries);
+    setLocalMessage(`已接收 ${entries.length} 个系统拖拽项，正在上传到目标目录...`);
+    void processPendingSystemUploads();
+  }
+
   async function onLocalCopyToTarget(entry: LocalFsEntry) {
     if (!connectedSftpProfile) {
       setLocalMessage('请先连接服务器。');
@@ -813,7 +999,8 @@ export function App() {
       setLocalUploadConflictDialog({
         localEntry: entry,
         remoteEntry: conflict,
-        remoteDir: sftpPath
+        remoteDir: sftpPath,
+        source: 'local'
       });
       setLocalMessage('目标目录存在同名项，请选择上传策略。');
       return;
@@ -826,14 +1013,19 @@ export function App() {
     if (!localUploadConflictDialog) {
       return;
     }
+    const dialog = localUploadConflictDialog;
     setLocalUploadConflictError(null);
-    await uploadLocalToTarget(localUploadConflictDialog.localEntry, strategy);
+    await uploadLocalToTarget(dialog.localEntry, strategy);
+    if (dialog.source === 'system') {
+      void processPendingSystemUploads();
+    }
   }
 
   async function onSubmitLocalUploadManualRename() {
     if (!localUploadConflictDialog) {
       return;
     }
+    const dialog = localUploadConflictDialog;
 
     const nextName = localUploadConflictRenameValue.trim();
     if (!nextName) {
@@ -850,7 +1042,10 @@ export function App() {
     }
 
     setLocalUploadConflictError(null);
-    await uploadLocalToTarget(localUploadConflictDialog.localEntry, 'auto_rename', nextName);
+    await uploadLocalToTarget(dialog.localEntry, 'auto_rename', nextName);
+    if (dialog.source === 'system') {
+      void processPendingSystemUploads();
+    }
   }
 
   async function submitLocalActionDialog() {
@@ -943,6 +1138,8 @@ export function App() {
   function onSelectSftpProfile(profileId: string) {
     setSelectedSftpProfileId(profileId);
     if (connectedSftpProfileId && connectedSftpProfileId !== profileId) {
+      pendingSystemUploadQueueRef.current = [];
+      processingSystemUploadQueueRef.current = false;
       setConnectedSftpProfileId('');
       setSftpEntries([]);
       setSftpPath('/root');
@@ -1346,6 +1543,8 @@ export function App() {
     if (!connectedSftpProfile) {
       return;
     }
+    pendingSystemUploadQueueRef.current = [];
+    processingSystemUploadQueueRef.current = false;
     const name = connectedSftpProfile.name;
     setConnectedSftpProfileId('');
     setSftpEntries([]);
@@ -1363,10 +1562,28 @@ export function App() {
   }
 
   function clearLocalCompletedTransfers() {
+    const completedIds = localCompletedTransferProgresses.map((task) => task.transfer_id);
+    completedIds.forEach((id) => {
+      localDismissedCompletedTransferIdsRef.current.add(id);
+      clearLocalTransferTimer(id);
+      delete localTransferStartedAtRef.current[id];
+    });
+    if (completedIds.length > 0) {
+      setLocalTransferProgresses((previous) => previous.filter((item) => !completedIds.includes(item.transfer_id)));
+    }
     setLocalCompletedTransferProgresses([]);
   }
 
   function clearSftpCompletedTransfers() {
+    const completedIds = sftpCompletedTransferProgresses.map((task) => task.transfer_id);
+    completedIds.forEach((id) => {
+      sftpDismissedCompletedTransferIdsRef.current.add(id);
+      clearSftpTransferTimer(id);
+      delete sftpTransferStartedAtRef.current[id];
+    });
+    if (completedIds.length > 0) {
+      setSftpTransferProgresses((previous) => previous.filter((item) => !completedIds.includes(item.transfer_id)));
+    }
     setSftpCompletedTransferProgresses([]);
   }
 
@@ -1683,6 +1900,7 @@ export function App() {
         </div>
         <div className={contentView === 'sftp' ? 'view-page' : 'view-page hidden'}>
           <SftpView
+            isActive={contentView === 'sftp'}
             profiles={profiles}
             selectedSftpProfileId={selectedSftpProfileId}
             selectedSftpProfile={selectedSftpProfile}
@@ -1743,6 +1961,7 @@ export function App() {
             onClearSftpCompletedTransfers={clearSftpCompletedTransfers}
             onUploadLocalEntryToRemote={(entry) => void onLocalCopyToTarget(entry)}
             onDownloadRemoteEntryToLocal={(entry) => void onSftpCopyToTarget(entry)}
+            onUploadSystemPathsToRemote={onUploadSystemPathsToRemote}
           />
         </div>
         <div className={contentView === 'workspace' ? 'view-page workspace-page' : 'view-page workspace-page hidden'}>
