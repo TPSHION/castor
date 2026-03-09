@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
@@ -7,13 +6,12 @@ import type {
   ConnectionProfile,
   LocalFsEntry,
   SftpDownloadRequest,
-  SftpDownloadResult,
   SftpEntry,
   SftpTransferProgressPayload,
   SftpUploadConflictStrategy,
-  SftpUploadRequest,
-  SftpUploadResult
+  SftpUploadRequest
 } from '../../types';
+import { cancelSftpTransfer, sftpDownloadFile, sftpUploadPath } from '../api/sftp';
 import type { LocalUploadConflictDialogState } from '../types';
 import { buildAuthFromProfile, formatBytes, formatInvokeError } from '../helpers';
 import { useSystemDropUploadQueue } from './useSystemDropUploadQueue';
@@ -166,7 +164,7 @@ export function useTransferOrchestrator({
       };
 
       try {
-        const result = await invoke<SftpUploadResult>('sftp_upload_path', { request });
+        const result = await sftpUploadPath(request);
         setLocalMessage(`已上传到目标目录：${result.remote_path}（${formatBytes(result.bytes)}）`);
         await loadSftpDir(connectedSftpProfile, sftpPath, {
           silent: true,
@@ -254,7 +252,7 @@ export function useTransferOrchestrator({
       };
 
       try {
-        const result = await invoke<SftpUploadResult>('sftp_upload_path', { request });
+        const result = await sftpUploadPath(request);
         setLocalMessage(`已上传到目标目录：${result.remote_path}（${formatBytes(result.bytes)}）`);
         await loadSftpDir(connectedSftpProfile, sftpPath, {
           silent: true,
@@ -411,7 +409,7 @@ export function useTransferOrchestrator({
       setSftpMessage(`正在下载：${entry.path}`);
 
       try {
-        const result = await invoke<SftpDownloadResult>('sftp_download_file', { request });
+        const result = await sftpDownloadFile(request);
         setSftpMessage(`下载完成：${result.local_path}（${formatBytes(result.bytes)}）`);
       } catch (invokeError) {
         const message = formatInvokeError(invokeError);
@@ -485,7 +483,7 @@ export function useTransferOrchestrator({
       request.transfer_id = transferId;
 
       try {
-        const result = await invoke<SftpDownloadResult>('sftp_download_file', { request });
+        const result = await sftpDownloadFile(request);
         setSftpMessage(`已下载到目标目录：${result.local_path}（${formatBytes(result.bytes)}）`);
         if (localPath) {
           void loadLocalDir(localPath, {
@@ -517,10 +515,8 @@ export function useTransferOrchestrator({
     async (transferId: string) => {
       setSftpMessage('正在取消下载...');
       try {
-        await invoke('cancel_sftp_transfer', {
-          request: {
-            transfer_id: transferId
-          }
+        await cancelSftpTransfer({
+          transfer_id: transferId
         });
       } catch (invokeError) {
         const message = formatInvokeError(invokeError);
@@ -536,10 +532,8 @@ export function useTransferOrchestrator({
     async (transferId: string) => {
       setLocalMessage('正在取消上传...');
       try {
-        await invoke('cancel_sftp_transfer', {
-          request: {
-            transfer_id: transferId
-          }
+        await cancelSftpTransfer({
+          transfer_id: transferId
         });
       } catch (invokeError) {
         const message = formatInvokeError(invokeError);

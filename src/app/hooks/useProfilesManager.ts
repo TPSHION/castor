@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   ConnectRequest,
@@ -6,6 +5,12 @@ import type {
   DeleteConnectionProfileRequest,
   UpsertConnectionProfileRequest
 } from '../../types';
+import {
+  deleteConnectionProfile,
+  listConnectionProfiles,
+  testSshConnection,
+  upsertConnectionProfile
+} from '../api/profiles';
 import type { EditorMode, ProfileEditor, TestState } from '../types';
 import { buildAuthFromEditor, createEmptyEditor, formatInvokeError, validateEditor } from '../helpers';
 
@@ -28,7 +33,7 @@ export function useProfilesManager() {
     setProfileMessage(null);
 
     try {
-      const nextProfiles = await invoke<ConnectionProfile[]>('list_connection_profiles');
+      const nextProfiles = await listConnectionProfiles();
       setProfiles(nextProfiles);
     } catch (invokeError) {
       setProfileMessage(formatInvokeError(invokeError));
@@ -101,7 +106,7 @@ export function useProfilesManager() {
     };
 
     try {
-      const saved = await invoke<ConnectionProfile>('upsert_connection_profile', { request });
+      const saved = await upsertConnectionProfile(request);
       setProfileMessage(`已保存：${saved.name}`);
       setIsEditorOpen(false);
       await refreshProfiles();
@@ -129,7 +134,7 @@ export function useProfilesManager() {
     setTestState({ phase: 'testing', message: '正在测试连接...' });
 
     try {
-      await invoke<string>('test_ssh_connection', { request });
+      await testSshConnection(request);
       setTestState({ phase: 'success', message: '连接测试成功' });
     } catch (invokeError) {
       setTestState({ phase: 'error', message: formatInvokeError(invokeError) });
@@ -143,7 +148,7 @@ export function useProfilesManager() {
 
       const request: DeleteConnectionProfileRequest = { id: profile.id };
       try {
-        await invoke('delete_connection_profile', { request });
+        await deleteConnectionProfile(request);
         setProfileMessage(`已删除：${profile.name}`);
         await refreshProfiles();
       } catch (invokeError) {

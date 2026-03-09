@@ -1,7 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ConnectionProfile, OutputPayload, SessionSummary } from '../../types';
+import type { ConnectionProfile, OutputPayload } from '../../types';
+import { connectLocalTerminal as connectLocalTerminalApi, connectSsh, disconnectSsh } from '../api/sessions';
 import type { SessionTab } from '../types';
 import { buildAuthFromProfile, createClientTabId, formatInvokeError } from '../helpers';
 
@@ -107,7 +107,7 @@ export function useSessionManager({
       };
 
       try {
-        const session = await invoke<SessionSummary>('connect_ssh', { request });
+        const session = await connectSsh(request);
         setSessionTabs((previous) =>
           previous.map((tab) =>
             tab.id === tabId
@@ -154,9 +154,8 @@ export function useSessionManager({
     setActiveTabId(tabId);
     onShowWorkspace();
 
-    const request = {};
     try {
-      const session = await invoke<SessionSummary>('connect_local_terminal', { request });
+      const session = await connectLocalTerminalApi();
       setSessionTabs((previous) =>
         previous.map((tab) =>
           tab.id === tabId
@@ -195,10 +194,8 @@ export function useSessionManager({
 
       if (target.sessionId) {
         try {
-          await invoke('disconnect_ssh', {
-            request: {
-              session_id: target.sessionId
-            }
+          await disconnectSsh({
+            session_id: target.sessionId
           });
         } catch {
           // Ignore close errors.

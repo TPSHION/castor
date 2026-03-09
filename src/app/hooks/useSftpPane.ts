@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   AuthConfig,
@@ -10,6 +9,7 @@ import type {
   SftpRenameRequest,
   SftpSetPermissionsRequest
 } from '../../types';
+import { sftpCreateDir, sftpDeleteEntry, sftpListDir, sftpRenameEntry, sftpSetPermissions } from '../api/sftp';
 import type { SftpActionDialogState, SftpContextMenuState } from '../types';
 import { buildAuthFromProfile, formatInvokeError, normalizeRemotePath, parentRemotePath, parsePermissionInput } from '../helpers';
 
@@ -81,7 +81,7 @@ export function useSftpPane(profiles: ConnectionProfile[]) {
       }
 
       try {
-        const entries = await invoke<SftpEntry[]>('sftp_list_dir', { request });
+        const entries = await sftpListDir(request);
         setSftpEntries(entries);
         setSftpPath(normalizedPath);
         setSftpPathInput(normalizedPath);
@@ -221,7 +221,7 @@ export function useSftpPane(profiles: ConnectionProfile[]) {
       setSftpMessage(`正在重命名：${entry.name}`);
 
       try {
-        await invoke('sftp_rename_entry', { request });
+        await sftpRenameEntry(request);
         setSftpActionDialog(null);
         setSftpSelectedPath(null);
         setSftpBusy(false);
@@ -255,7 +255,7 @@ export function useSftpPane(profiles: ConnectionProfile[]) {
       setSftpMessage(`正在删除：${entry.path}`);
 
       try {
-        await invoke('sftp_delete_entry', { request });
+        await sftpDeleteEntry(request);
         setSftpActionDialog(null);
         setSftpSelectedPath(null);
         setSftpBusy(false);
@@ -296,7 +296,7 @@ export function useSftpPane(profiles: ConnectionProfile[]) {
       setSftpMessage(`正在创建文件夹：${trimmedName}`);
 
       try {
-        await invoke('sftp_create_dir', { request });
+        await sftpCreateDir(request);
         setSftpActionDialog(null);
         setSftpBusy(false);
         await loadSftpDir(context.profile, sftpPath);
@@ -336,7 +336,7 @@ export function useSftpPane(profiles: ConnectionProfile[]) {
       setSftpMessage(`正在更新权限：${entry.path}`);
 
       try {
-        await invoke('sftp_set_permissions', { request });
+        await sftpSetPermissions(request);
         setSftpActionDialog(null);
         setSftpBusy(false);
         await loadSftpDir(context.profile, sftpPath);

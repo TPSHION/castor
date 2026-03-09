@@ -1,13 +1,12 @@
-import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useState } from 'react';
 import type {
   LocalCreateDirRequest,
   LocalDeleteRequest,
   LocalFsEntry,
   LocalListRequest,
-  LocalListResponse,
   LocalRenameRequest
 } from '../../types';
+import { listLocalDir, localCreateDir, localDeleteEntry, localRenameEntry } from '../api/localfs';
 import type { LocalActionDialogState, LocalContextMenuState } from '../types';
 import { formatInvokeError } from '../helpers';
 
@@ -56,7 +55,7 @@ export function useLocalFilePane() {
       }
 
       try {
-        const result = await invoke<LocalListResponse>('list_local_dir', { request });
+        const result = await listLocalDir(request);
         setLocalEntries(result.entries);
         setLocalPath(result.path);
         setLocalPathInput(result.path);
@@ -141,7 +140,7 @@ export function useLocalFilePane() {
       setLocalMessage(`正在重命名：${entry.name}`);
 
       try {
-        await invoke('local_rename_entry', { request });
+        await localRenameEntry(request);
         setLocalActionDialog(null);
         setLocalSelectedPath(null);
         setLocalBusy(false);
@@ -166,7 +165,7 @@ export function useLocalFilePane() {
       setLocalMessage(`正在删除：${entry.path}`);
 
       try {
-        await invoke('local_delete_entry', { request });
+        await localDeleteEntry(request);
         setLocalActionDialog(null);
         setLocalSelectedPath(null);
         setLocalBusy(false);
@@ -198,7 +197,7 @@ export function useLocalFilePane() {
       setLocalMessage(`正在创建文件夹：${trimmedName}`);
 
       try {
-        await invoke('local_create_dir', { request });
+        await localCreateDir(request);
         setLocalActionDialog(null);
         setLocalBusy(false);
         await loadLocalDir(localPath);

@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import type { OutputPayload, ResizeRequest, SendInputRequest } from '../types';
+import { resizeSsh, sendSshInput } from '../app/api/sessions';
 
 type TerminalViewProps = {
   sessionId: string;
@@ -59,7 +59,7 @@ export function TerminalView({ sessionId, active }: TerminalViewProps) {
         session_id: sessionId,
         data
       };
-      void invoke('send_ssh_input', { request: payload });
+      void sendSshInput(payload);
     });
 
     const onWindowResize = () => {
@@ -75,7 +75,7 @@ export function TerminalView({ sessionId, active }: TerminalViewProps) {
         cols,
         rows
       };
-      void invoke('resize_ssh', { request: payload });
+      void resizeSsh(payload);
     };
 
     window.addEventListener('resize', onWindowResize);
@@ -112,7 +112,7 @@ export function TerminalView({ sessionId, active }: TerminalViewProps) {
       cols: termRef.current.cols,
       rows: termRef.current.rows
     };
-    void invoke('resize_ssh', { request: payload });
+    void resizeSsh(payload);
   }, [active, sessionId]);
 
   useEffect(() => {
