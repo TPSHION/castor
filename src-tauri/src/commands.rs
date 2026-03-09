@@ -100,8 +100,10 @@ pub fn delete_connection_profile(
 }
 
 #[tauri::command]
-pub fn sftp_list_dir(request: SftpListRequest) -> Result<Vec<SftpEntry>, String> {
-  sftp_list_dir_impl(request)
+pub async fn sftp_list_dir(request: SftpListRequest) -> Result<Vec<SftpEntry>, String> {
+  tauri::async_runtime::spawn_blocking(move || sftp_list_dir_impl(request))
+    .await
+    .map_err(|err| format!("failed to join sftp list task: {err}"))?
 }
 
 #[tauri::command]

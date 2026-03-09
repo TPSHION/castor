@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::env;
 use std::fs::{self, File};
+use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -257,36 +258,114 @@ impl Drop for TransferRegistrationGuard {
   }
 }
 
-pub fn cancel_transfer(request: CancelSftpTransferRequest) -> Result<(), String> {
-  let transfer_id = request.transfer_id.trim();
-  if transfer_id.is_empty() {
-    return Err("transfer id is required".to_string());
+struct SftpConnection {
+  _session: Session,
+  sftp: ssh2::Sftp
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct SftpConnectionKey {
+  host: String,
+  port: u16,
+  username: String,
+  auth_fingerprint: u64
+}
+
+fn auth_fingerprint(auth: &AuthConfig) -> u64 {
+  let mut hasher = DefaultHasher::new();
+  match auth {
+    AuthConfig::Password { password } => {
+      1u8.hash(&mut hasher);
+      password.hash(&mut hasher);
+    }
+    AuthConfig::PrivateKey {
+      private_key,
+      passphrase
+    } => {
+      2u8.hash(&mut hasher);
+      private_key.hash(&mut hasher);
+      passphrase.hash(&mut hasher);
+    }
   }
+  hasher.finish()
+}
 
-  let maybe_token = transfer_registry()
-    .lock()
-    .ok()
-    .and_then(|registry| registry.get(transfer_id).cloned());
-
-  if let Some(token) = maybe_token {
-    token.store(true, Ordering::Relaxed);
-    Ok(())
-  } else {
-    Err("目标下载任务不存在或已结束".to_string())
+fn build_sftp_connection_key(
+  host: &str,
+  port: Option<u16>,
+  username: &str,
+  auth: &AuthConfig
+) -> SftpConnectionKey {
+  SftpConnectionKey {
+    host: host.to_string(),
+    port: port.unwrap_or(22),
+    username: username.to_string(),
+    auth_fingerprint: auth_fingerprint(auth)
   }
 }
 
-pub fn list_dir(request: SftpListRequest) -> Result<Vec<SftpEntry>, String> {
-  let normalized_path = normalize_remote_path(request.path.as_deref().unwrap_or("/"));
-  let (_session, sftp) = connect_sftp(
-    request.host,
-    request.port,
-    request.username,
-    request.auth
-  )?;
+fn sftp_connection_pool() -> &'static Mutex<HashMap<SftpConnectionKey, Arc<Mutex<SftpConnection>>>> {
+  static POOL: OnceLock<Mutex<HashMap<SftpConnectionKey, Arc<Mutex<SftpConnection>>>>> = OnceLock::new();
+  POOL.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
+fn connect_sftp_connection(key: &SftpConnectionKey, auth: &AuthConfig) -> Result<SftpConnection, String> {
+  let (session, sftp) = connect_sftp(&key.host, Some(key.port), &key.username, auth)?;
+  Ok(SftpConnection {
+    _session: session,
+    sftp
+  })
+}
+
+fn get_or_create_sftp_connection(
+  key: &SftpConnectionKey,
+  auth: &AuthConfig
+) -> Result<Arc<Mutex<SftpConnection>>, String> {
+  if let Some(existing) = sftp_connection_pool()
+    .lock()
+    .map_err(|_| "sftp connection pool lock poisoned".to_string())?
+    .get(key)
+    .cloned()
+  {
+    return Ok(existing);
+  }
+
+  let fresh = Arc::new(Mutex::new(connect_sftp_connection(key, auth)?));
+  let mut pool = sftp_connection_pool()
+    .lock()
+    .map_err(|_| "sftp connection pool lock poisoned".to_string())?;
+  let entry = pool
+    .entry(key.clone())
+    .or_insert_with(|| fresh.clone())
+    .clone();
+  Ok(entry)
+}
+
+fn replace_sftp_connection(
+  key: &SftpConnectionKey,
+  auth: &AuthConfig
+) -> Result<Arc<Mutex<SftpConnection>>, String> {
+  let fresh = Arc::new(Mutex::new(connect_sftp_connection(key, auth)?));
+  let mut pool = sftp_connection_pool()
+    .lock()
+    .map_err(|_| "sftp connection pool lock poisoned".to_string())?;
+  pool.insert(key.clone(), fresh.clone());
+  Ok(fresh)
+}
+
+fn list_dir_with_connection(
+  connection: &Arc<Mutex<SftpConnection>>,
+  normalized_path: &str
+) -> Result<Vec<SftpEntry>, String> {
+  let connection = connection
+    .lock()
+    .map_err(|_| "sftp connection lock poisoned".to_string())?;
+  list_dir_from_sftp(&connection.sftp, normalized_path)
+}
+
+fn list_dir_from_sftp(sftp: &ssh2::Sftp, normalized_path: &str) -> Result<Vec<SftpEntry>, String> {
   let entries = sftp
-    .readdir(Path::new(&normalized_path))
+    .readdir(Path::new(normalized_path))
     .map_err(|err| format!("failed to list directory {normalized_path}: {err}"))?;
 
   let mut result = entries
@@ -301,7 +380,7 @@ pub fn list_dir(request: SftpListRequest) -> Result<Vec<SftpEntry>, String> {
         return None;
       }
 
-      let path = join_remote_path(&normalized_path, &name);
+      let path = join_remote_path(normalized_path, &name);
       let is_dir = stat
         .perm
         .map(|mode| (mode & S_IFMT) == S_IFDIR)
@@ -327,6 +406,41 @@ pub fn list_dir(request: SftpListRequest) -> Result<Vec<SftpEntry>, String> {
   Ok(result)
 }
 
+pub fn cancel_transfer(request: CancelSftpTransferRequest) -> Result<(), String> {
+  let transfer_id = request.transfer_id.trim();
+  if transfer_id.is_empty() {
+    return Err("transfer id is required".to_string());
+  }
+
+  let maybe_token = transfer_registry()
+    .lock()
+    .ok()
+    .and_then(|registry| registry.get(transfer_id).cloned());
+
+  if let Some(token) = maybe_token {
+    token.store(true, Ordering::Relaxed);
+    Ok(())
+  } else {
+    Err("目标下载任务不存在或已结束".to_string())
+  }
+}
+
+pub fn list_dir(request: SftpListRequest) -> Result<Vec<SftpEntry>, String> {
+  let normalized_path = normalize_remote_path(request.path.as_deref().unwrap_or("/"));
+  let connection_key =
+    build_sftp_connection_key(&request.host, request.port, &request.username, &request.auth);
+  let connection = get_or_create_sftp_connection(&connection_key, &request.auth)?;
+
+  match list_dir_with_connection(&connection, &normalized_path) {
+    Ok(entries) => Ok(entries),
+    Err(_) => {
+      // Retry once with a fresh connection to recover from stale pooled sessions.
+      let refreshed_connection = replace_sftp_connection(&connection_key, &request.auth)?;
+      list_dir_with_connection(&refreshed_connection, &normalized_path)
+    }
+  }
+}
+
 pub fn download_file(app: &AppHandle, request: SftpDownloadRequest) -> Result<SftpDownloadResult, String> {
   let remote_path = normalize_remote_path(&request.remote_path);
   let transfer_id = request
@@ -338,12 +452,7 @@ pub fn download_file(app: &AppHandle, request: SftpDownloadRequest) -> Result<Sf
   let cancel_token = register_transfer(&transfer_id);
   let _registration_guard = TransferRegistrationGuard::new(transfer_id.clone());
 
-  let (_session, sftp) = connect_sftp(
-    request.host,
-    request.port,
-    request.username,
-    request.auth
-  )?;
+  let (_session, sftp) = connect_sftp(&request.host, request.port, &request.username, &request.auth)?;
 
   let file_name = Path::new(&remote_path)
     .file_name()
@@ -414,12 +523,7 @@ pub fn upload_path(app: &AppHandle, request: SftpUploadRequest) -> Result<SftpUp
   }
 
   let remote_dir = normalize_remote_path(&request.remote_dir);
-  let (_session, sftp) = connect_sftp(
-    request.host,
-    request.port,
-    request.username,
-    request.auth
-  )?;
+  let (_session, sftp) = connect_sftp(&request.host, request.port, &request.username, &request.auth)?;
 
   create_remote_dir_all(&sftp, &remote_dir)?;
 
@@ -498,12 +602,7 @@ pub fn rename_entry(request: SftpRenameRequest) -> Result<(), String> {
     return Err("invalid new name".to_string());
   }
 
-  let (_session, sftp) = connect_sftp(
-    request.host,
-    request.port,
-    request.username,
-    request.auth
-  )?;
+  let (_session, sftp) = connect_sftp(&request.host, request.port, &request.username, &request.auth)?;
 
   let source_path = Path::new(&source);
   let parent = source_path
@@ -522,12 +621,7 @@ pub fn delete_entry(request: SftpDeleteRequest) -> Result<(), String> {
   if path == "/" {
     return Err("refuse to delete root directory".to_string());
   }
-  let (_session, sftp) = connect_sftp(
-    request.host,
-    request.port,
-    request.username,
-    request.auth
-  )?;
+  let (_session, sftp) = connect_sftp(&request.host, request.port, &request.username, &request.auth)?;
 
   remove_remote_path_recursive(&sftp, &path)
 }
@@ -540,12 +634,7 @@ pub fn create_dir(request: SftpCreateDirRequest) -> Result<(), String> {
   }
 
   let target = join_remote_path(&parent, name);
-  let (_session, sftp) = connect_sftp(
-    request.host,
-    request.port,
-    request.username,
-    request.auth
-  )?;
+  let (_session, sftp) = connect_sftp(&request.host, request.port, &request.username, &request.auth)?;
 
   sftp
     .mkdir(Path::new(&target), 0o755)
@@ -558,12 +647,7 @@ pub fn set_permissions(request: SftpSetPermissionsRequest) -> Result<(), String>
   }
 
   let path = normalize_remote_path(&request.path);
-  let (_session, sftp) = connect_sftp(
-    request.host,
-    request.port,
-    request.username,
-    request.auth
-  )?;
+  let (_session, sftp) = connect_sftp(&request.host, request.port, &request.username, &request.auth)?;
 
   let current = sftp
     .stat(Path::new(&path))
@@ -588,10 +672,10 @@ pub fn set_permissions(request: SftpSetPermissionsRequest) -> Result<(), String>
 }
 
 fn connect_sftp(
-  host: String,
+  host: &str,
   port: Option<u16>,
-  username: String,
-  auth: AuthConfig
+  username: &str,
+  auth: &AuthConfig
 ) -> Result<(Session, ssh2::Sftp), String> {
   let port = port.unwrap_or(22);
   let addr = format!("{host}:{port}");
@@ -605,13 +689,13 @@ fn connect_sftp(
 
   match auth {
     AuthConfig::Password { password } => session
-      .userauth_password(&username, &password)
+      .userauth_password(username, password)
       .map_err(|err| format!("password authentication failed: {err}"))?,
     AuthConfig::PrivateKey {
       private_key,
       passphrase
     } => session
-      .userauth_pubkey_memory(&username, None, &private_key, passphrase.as_deref())
+      .userauth_pubkey_memory(username, None, private_key, passphrase.as_deref())
       .map_err(|err| format!("private key authentication failed: {err}"))?
   }
 

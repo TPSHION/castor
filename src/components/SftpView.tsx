@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { listen, TauriEvent } from '@tauri-apps/api/event';
 import type { ConnectionProfile, LocalFsEntry, SftpEntry, SftpTransferProgressPayload } from '../types';
 import { TransferTasksPanelModal } from './TransferTasksPanelModal';
@@ -55,6 +55,13 @@ type SftpViewProps = {
   onDownloadRemoteEntryToLocal: (entry: SftpEntry) => void;
   onUploadSystemPathsToRemote: (paths: string[]) => void;
 };
+
+function getEntryRowClassName(isDir: boolean, selected: boolean) {
+  if (isDir) {
+    return selected ? 'sftp-entry-row dir selected' : 'sftp-entry-row dir';
+  }
+  return selected ? 'sftp-entry-row selected' : 'sftp-entry-row';
+}
 
 export function SftpView({
   isActive,
@@ -192,20 +199,20 @@ export function SftpView({
     setRemoteDropActive(false);
   };
 
-  const startDragCandidate = (
-    event: React.MouseEvent,
-    payload: { source: 'local' | 'remote'; path: string; name: string }
-  ) => {
-    if (event.button !== 0) {
-      return;
-    }
-    dragStartRef.current = {
-      ...payload,
-      startX: event.clientX,
-      startY: event.clientY
-    };
-    setDragInteractionActive(true);
-  };
+  const startDragCandidate = useCallback(
+    (event: React.MouseEvent, payload: { source: 'local' | 'remote'; path: string; name: string }) => {
+      if (event.button !== 0) {
+        return;
+      }
+      dragStartRef.current = {
+        ...payload,
+        startX: event.clientX,
+        startY: event.clientY
+      };
+      setDragInteractionActive(true);
+    },
+    []
+  );
 
   useEffect(() => {
     const onMouseMove = (event: MouseEvent) => {
@@ -447,6 +454,132 @@ export function SftpView({
   const sftpPrimaryTask = sftpRunningTasks[0] ?? null;
   const localPanelButtonVisible = localRunningTasks.length > 1 || localCompletedTransferProgresses.length > 0;
   const sftpPanelButtonVisible = sftpRunningTasks.length > 1 || sftpCompletedTransferProgresses.length > 0;
+  const localEntryRows = useMemo(() => {
+    if (localEntries.length === 0) {
+      return (
+        <tr>
+          <td colSpan={4} className="sftp-empty-cell">
+            当前本地目录为空
+          </td>
+        </tr>
+      );
+    }
+
+    return localEntries.map((entry) => (
+      <tr
+        key={entry.path}
+        className={getEntryRowClassName(entry.is_dir, localSelectedPath === entry.path)}
+        onClick={(event) => {
+          event.stopPropagation();
+          onLocalSelectPath(entry.path);
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onLocalSelectPath(entry.path);
+          onOpenLocalContextMenu(event.clientX, event.clientY, entry);
+        }}
+        onDoubleClick={() => {
+          if (entry.is_dir) {
+            onLocalEnterDir(entry);
+          }
+        }}
+      >
+        <td>
+          <div
+            className="entry-name-cell drag-source"
+            onMouseDown={(event) => {
+              startDragCandidate(event, {
+                source: 'local',
+                path: entry.path,
+                name: entry.name
+              });
+            }}
+          >
+            <span className={entry.is_dir ? 'entry-icon dir' : 'entry-icon file'} aria-hidden="true" />
+            <span>{entry.name}</span>
+          </div>
+        </td>
+        <td>{formatUnixTime(entry.modified)}</td>
+        <td>{entry.is_dir ? '-' : formatBytes(entry.size)}</td>
+        <td>{entry.is_dir ? 'folder' : 'file'}</td>
+      </tr>
+    ));
+  }, [
+    formatBytes,
+    formatUnixTime,
+    localEntries,
+    localSelectedPath,
+    onLocalEnterDir,
+    onLocalSelectPath,
+    onOpenLocalContextMenu,
+    startDragCandidate
+  ]);
+
+  const remoteEntryRows = useMemo(() => {
+    if (sftpEntries.length === 0) {
+      return (
+        <tr>
+          <td colSpan={4} className="sftp-empty-cell">
+            当前远程目录为空
+          </td>
+        </tr>
+      );
+    }
+
+    return sftpEntries.map((entry) => (
+      <tr
+        key={entry.path}
+        className={getEntryRowClassName(entry.is_dir, sftpSelectedPath === entry.path)}
+        onClick={(event) => {
+          event.stopPropagation();
+          onSftpSelectPath(entry.path);
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onSftpSelectPath(entry.path);
+          onOpenSftpContextMenu(event.clientX, event.clientY, entry);
+        }}
+        onDoubleClick={() => {
+          if (entry.is_dir) {
+            onSftpEnterDir(entry);
+            return;
+          }
+          onSftpDownload(entry);
+        }}
+      >
+        <td>
+          <div
+            className="entry-name-cell drag-source"
+            onMouseDown={(event) => {
+              startDragCandidate(event, {
+                source: 'remote',
+                path: entry.path,
+                name: entry.name
+              });
+            }}
+          >
+            <span className={entry.is_dir ? 'entry-icon dir' : 'entry-icon file'} aria-hidden="true" />
+            <span>{entry.name}</span>
+          </div>
+        </td>
+        <td>{formatUnixTime(entry.modified)}</td>
+        <td>{entry.is_dir ? '-' : formatBytes(entry.size)}</td>
+        <td>{entry.is_dir ? 'folder' : 'file'}</td>
+      </tr>
+    ));
+  }, [
+    formatBytes,
+    formatUnixTime,
+    onOpenSftpContextMenu,
+    onSftpDownload,
+    onSftpEnterDir,
+    onSftpSelectPath,
+    sftpEntries,
+    sftpSelectedPath,
+    startDragCandidate
+  ]);
 
   return (
     <div className="sftp-dual-page">
@@ -538,62 +671,7 @@ export function SftpView({
                     <td>folder</td>
                   </tr>
                 )}
-                {localEntries.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="sftp-empty-cell">
-                      当前本地目录为空
-                    </td>
-                  </tr>
-                ) : (
-                  localEntries.map((entry) => (
-                    <tr
-                      key={entry.path}
-                      className={
-                        entry.is_dir
-                          ? localSelectedPath === entry.path
-                            ? 'sftp-entry-row dir selected'
-                            : 'sftp-entry-row dir'
-                          : localSelectedPath === entry.path
-                            ? 'sftp-entry-row selected'
-                            : 'sftp-entry-row'
-                      }
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onLocalSelectPath(entry.path);
-                      }}
-                      onContextMenu={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        onLocalSelectPath(entry.path);
-                        onOpenLocalContextMenu(event.clientX, event.clientY, entry);
-                      }}
-                      onDoubleClick={() => {
-                        if (entry.is_dir) {
-                          onLocalEnterDir(entry);
-                        }
-                      }}
-                    >
-                      <td>
-                        <div
-                          className="entry-name-cell drag-source"
-                          onMouseDown={(event) => {
-                            startDragCandidate(event, {
-                              source: 'local',
-                              path: entry.path,
-                              name: entry.name
-                            });
-                          }}
-                        >
-                          <span className={entry.is_dir ? 'entry-icon dir' : 'entry-icon file'} aria-hidden="true" />
-                          <span>{entry.name}</span>
-                        </div>
-                      </td>
-                      <td>{formatUnixTime(entry.modified)}</td>
-                      <td>{entry.is_dir ? '-' : formatBytes(entry.size)}</td>
-                      <td>{entry.is_dir ? 'folder' : 'file'}</td>
-                    </tr>
-                  ))
-                )}
+                {localEntryRows}
               </tbody>
             </table>
           </div>
@@ -762,64 +840,7 @@ export function SftpView({
                       <td>folder</td>
                     </tr>
                   )}
-                  {sftpEntries.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="sftp-empty-cell">
-                        当前远程目录为空
-                      </td>
-                    </tr>
-                  ) : (
-                    sftpEntries.map((entry) => (
-                      <tr
-                        key={entry.path}
-                        className={
-                          entry.is_dir
-                            ? sftpSelectedPath === entry.path
-                              ? 'sftp-entry-row dir selected'
-                              : 'sftp-entry-row dir'
-                            : sftpSelectedPath === entry.path
-                              ? 'sftp-entry-row selected'
-                              : 'sftp-entry-row'
-                        }
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onSftpSelectPath(entry.path);
-                        }}
-                        onContextMenu={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          onSftpSelectPath(entry.path);
-                          onOpenSftpContextMenu(event.clientX, event.clientY, entry);
-                        }}
-                        onDoubleClick={() => {
-                          if (entry.is_dir) {
-                            onSftpEnterDir(entry);
-                            return;
-                          }
-                          onSftpDownload(entry);
-                        }}
-                      >
-                        <td>
-                          <div
-                            className="entry-name-cell drag-source"
-                            onMouseDown={(event) => {
-                              startDragCandidate(event, {
-                                source: 'remote',
-                                path: entry.path,
-                                name: entry.name
-                              });
-                            }}
-                          >
-                            <span className={entry.is_dir ? 'entry-icon dir' : 'entry-icon file'} aria-hidden="true" />
-                            <span>{entry.name}</span>
-                          </div>
-                        </td>
-                        <td>{formatUnixTime(entry.modified)}</td>
-                        <td>{entry.is_dir ? '-' : formatBytes(entry.size)}</td>
-                        <td>{entry.is_dir ? 'folder' : 'file'}</td>
-                      </tr>
-                    ))
-                  )}
+                  {remoteEntryRows}
                 </tbody>
               </table>
             </div>

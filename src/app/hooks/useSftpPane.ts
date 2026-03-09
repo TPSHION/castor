@@ -80,8 +80,11 @@ export function useSftpPane(profiles: ConnectionProfile[]) {
         setSftpMessage(`正在读取 ${profile.name} 的远程目录：${normalizedPath}`);
       }
 
+      const requestStartedAt = performance.now();
       try {
         const entries = await sftpListDir(request);
+        const requestElapsedMs = performance.now() - requestStartedAt;
+        const uiRenderStartedAt = performance.now();
         setSftpEntries(entries);
         setSftpPath(normalizedPath);
         setSftpPathInput(normalizedPath);
@@ -89,8 +92,23 @@ export function useSftpPane(profiles: ConnectionProfile[]) {
         setSftpSelectedPath(null);
         setSftpContextMenu(null);
         if (!silent) {
-          setSftpMessage(`目录读取成功，共 ${entries.length} 项`);
+          setSftpMessage(`目录读取成功，共 ${entries.length} 项（SFTP ${Math.round(requestElapsedMs)}ms / UI 计算中...）`);
         }
+        requestAnimationFrame(() => {
+          const uiElapsedMs = performance.now() - uiRenderStartedAt;
+          console.info('[sftp] list_dir metrics', {
+            profileId: profile.id,
+            path: normalizedPath,
+            entryCount: entries.length,
+            requestMs: Math.round(requestElapsedMs),
+            uiMs: Math.round(uiElapsedMs)
+          });
+          if (!silent) {
+            setSftpMessage(
+              `目录读取成功，共 ${entries.length} 项（SFTP ${Math.round(requestElapsedMs)}ms / UI ${Math.round(uiElapsedMs)}ms）`
+            );
+          }
+        });
       } catch (invokeError) {
         setSftpMessage(formatInvokeError(invokeError));
       } finally {
