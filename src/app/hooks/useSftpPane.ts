@@ -188,11 +188,7 @@ export function useSftpPane(profiles: ConnectionProfile[]) {
       if (!request) {
         return;
       }
-      try {
-        await sftpDisconnect(request);
-      } catch {
-        // Ignore disconnect errors and let UI state cleanup continue.
-      }
+      await sftpDisconnect(request);
     },
     [buildSftpConnectionRequest]
   );

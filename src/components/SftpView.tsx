@@ -695,15 +695,20 @@ export function SftpView({
                 </option>
               ))}
             </select>
-            <button type="button" onClick={onConnectSftpHost} disabled={!selectedSftpProfile || sftpBusy || profiles.length === 0}>
-              连接
-            </button>
-            <button type="button" onClick={onRefreshConnectedSftpHost} disabled={sftpBusy || !connectedSftpProfile}>
-              刷新
-            </button>
-            <button type="button" onClick={onDisconnectSftpHost} disabled={sftpBusy || !connectedSftpProfile}>
-              关闭连接
-            </button>
+            {connectedSftpProfile ? (
+              <>
+                <button type="button" onClick={onRefreshConnectedSftpHost} disabled={sftpBusy}>
+                  刷新
+                </button>
+                <button type="button" onClick={onDisconnectSftpHost} disabled={sftpBusy}>
+                  关闭连接
+                </button>
+              </>
+            ) : (
+              <button type="button" onClick={onConnectSftpHost} disabled={!selectedSftpProfile || sftpBusy || profiles.length === 0}>
+                连接
+              </button>
+            )}
           </div>
         </div>
 

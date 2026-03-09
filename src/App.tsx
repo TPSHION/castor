@@ -18,6 +18,7 @@ import type { ContentView, ConnectionProfile } from './app/types';
 import {
   defaultPermissionInput,
   formatBytes,
+  formatInvokeError,
   formatPermissionMode,
   formatUnixTime
 } from './app/helpers';
@@ -193,11 +194,40 @@ export function App() {
 
   const onSelectSftpProfile = useCallback(
     (profileId: string) => {
+      if (connectedSftpProfile && connectedSftpProfile.id !== profileId) {
+        const confirmed = window.confirm(
+          `当前已连接服务器“${connectedSftpProfile.name}”。切换到其他服务器前需要关闭旧会话，是否继续？`
+        );
+        if (!confirmed) {
+          return;
+        }
+
+        void (async () => {
+          try {
+            await disconnectSftpHostSession(connectedSftpProfile);
+          } catch (invokeError) {
+            setSftpMessage(`关闭旧会话失败：${formatInvokeError(invokeError)}`);
+            return;
+          }
+
+          onSelectSftpProfileCore(profileId, {
+            onSwitchedConnectedProfile: resetSystemDropQueue
+          });
+        })();
+        return;
+      }
+
       onSelectSftpProfileCore(profileId, {
         onSwitchedConnectedProfile: resetSystemDropQueue
       });
     },
-    [onSelectSftpProfileCore, resetSystemDropQueue]
+    [
+      connectedSftpProfile,
+      disconnectSftpHostSession,
+      onSelectSftpProfileCore,
+      resetSystemDropQueue,
+      setSftpMessage
+    ]
   );
 
   function openLocalContextMenuAt(x: number, y: number, entry: LocalFsEntry | null) {
@@ -282,7 +312,12 @@ export function App() {
     if (!connectedSftpProfile) {
       return;
     }
-    await disconnectSftpHostSession(connectedSftpProfile);
+    try {
+      await disconnectSftpHostSession(connectedSftpProfile);
+    } catch (invokeError) {
+      setSftpMessage(`关闭连接失败：${formatInvokeError(invokeError)}`);
+      return;
+    }
     resetSystemDropQueue();
     const name = connectedSftpProfile.name;
     setConnectedSftpProfileId('');
