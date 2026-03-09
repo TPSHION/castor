@@ -357,4 +357,6 @@ export type RemoteSystemdServiceTemplate = {
   exec_stop?: string;
   service_user?: string;
   environment?: string[];
+  log_output_mode?: SystemdLogOutputMode;
+  log_output_path?: string;
 };

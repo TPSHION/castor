@@ -167,6 +167,8 @@ pub struct RemoteSystemdServiceTemplate {
     pub exec_stop: Option<String>,
     pub service_user: Option<String>,
     pub environment: Option<Vec<String>>,
+    pub log_output_mode: Option<SystemdLogOutputMode>,
+    pub log_output_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -958,6 +960,8 @@ fn parse_remote_service_template_from_unit_content(
     let mut exec_stop: Option<String> = None;
     let mut service_user: Option<String> = None;
     let mut environment: Vec<String> = Vec::new();
+    let mut standard_output: Option<String> = None;
+    let mut standard_error: Option<String> = None;
 
     for line in unit_file_logical_lines(raw) {
         let trimmed = line.trim();
@@ -997,9 +1001,16 @@ fn parse_remote_service_template_from_unit_content(
                 service_user = Some(value.clone());
             } else if key.eq_ignore_ascii_case("Environment") {
                 environment.push(value.clone());
+            } else if key.eq_ignore_ascii_case("StandardOutput") && standard_output.is_none() {
+                standard_output = Some(value.clone());
+            } else if key.eq_ignore_ascii_case("StandardError") && standard_error.is_none() {
+                standard_error = Some(value.clone());
             }
         }
     }
+
+    let (log_output_mode, log_output_path) =
+        parse_remote_log_output_mode(standard_output.as_deref(), standard_error.as_deref());
 
     RemoteSystemdServiceTemplate {
         service_name: service_name.to_string(),
@@ -1013,7 +1024,42 @@ fn parse_remote_service_template_from_unit_content(
         } else {
             Some(environment)
         },
+        log_output_mode,
+        log_output_path,
     }
+}
+
+fn parse_remote_log_output_mode(
+    standard_output: Option<&str>,
+    standard_error: Option<&str>,
+) -> (Option<SystemdLogOutputMode>, Option<String>) {
+    let stdout = standard_output.map(str::trim).filter(|item| !item.is_empty());
+    let stderr = standard_error.map(str::trim).filter(|item| !item.is_empty());
+    let primary = stdout.or(stderr);
+
+    let Some(value) = primary else {
+        return (None, None);
+    };
+
+    if value.eq_ignore_ascii_case("null") {
+        return (Some(SystemdLogOutputMode::None), None);
+    }
+
+    if value.eq_ignore_ascii_case("journal") || value.eq_ignore_ascii_case("journal+console") {
+        return (Some(SystemdLogOutputMode::Journal), None);
+    }
+
+    if let Some(path) = value.strip_prefix("append:").or_else(|| value.strip_prefix("file:")) {
+        let normalized = path.trim();
+        if !normalized.is_empty() {
+            return (
+                Some(SystemdLogOutputMode::File),
+                Some(normalized.to_string()),
+            );
+        }
+    }
+
+    (Some(SystemdLogOutputMode::Journal), None)
 }
 
 fn unit_file_logical_lines(raw: &str) -> Vec<String> {

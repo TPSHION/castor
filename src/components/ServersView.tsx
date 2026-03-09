@@ -631,6 +631,16 @@ export function ServersView({
         const prevDefaultPath = defaultSystemdLogOutputPath(previous.serviceName);
         const shouldSyncPath = !previous.logOutputPath.trim() || previous.logOutputPath === prevDefaultPath;
         const nextExecStart = template.exec_start?.trim() || previous.execStart;
+        const importedLogMode = template.log_output_mode ?? (template.log_output_path?.trim() ? 'file' : previous.logOutputMode);
+        const importedLogPath = template.log_output_path?.trim();
+        let nextLogOutputPath = previous.logOutputPath;
+        if (importedLogMode === 'file') {
+          if (importedLogPath) {
+            nextLogOutputPath = importedLogPath;
+          } else if (shouldSyncPath || !previous.logOutputPath.trim()) {
+            nextLogOutputPath = defaultSystemdLogOutputPath(nextServiceName);
+          }
+        }
         return {
           ...previous,
           name: previous.name.trim() ? previous.name : nextServiceName,
@@ -642,7 +652,8 @@ export function ServersView({
           serviceUser: previous.scope === 'system' ? (template.service_user ?? previous.serviceUser) : previous.serviceUser,
           environmentText: template.environment?.join('\n') ?? '',
           serviceType: inferServiceType(nextExecStart),
-          logOutputPath: shouldSyncPath ? defaultSystemdLogOutputPath(nextServiceName) : previous.logOutputPath
+          logOutputMode: importedLogMode,
+          logOutputPath: nextLogOutputPath
         };
       });
       setSystemdImportPanelOpen(false);
