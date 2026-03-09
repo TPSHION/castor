@@ -578,14 +578,14 @@ body.window-titlebar-overlay .header-functions {
 
 .sftp-context-menu {
   position: fixed;
-  width: 240px;
+  width: 200px;
   border: 1px solid rgb(82 101 137 / 80%);
-  border-radius: 14px;
+  border-radius: 9px;
   background: rgb(24 34 56 / 96%);
   box-shadow: 0 18px 50px rgb(4 8 16 / 42%);
-  padding: 8px;
+  padding: 4px;
   display: grid;
-  gap: 4px;
+  gap: 1px;
   pointer-events: auto;
   backdrop-filter: blur(12px);
 }
@@ -595,14 +595,15 @@ body.window-titlebar-overlay .header-functions {
   border: none;
   background: transparent;
   color: #e7efff;
-  min-height: 38px;
+  min-height: 28px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px;
+  gap: 6px;
+  padding: 4px 8px;
   text-align: left;
-  font-size: 0.92rem;
+  font-size: 0.79rem;
+  line-height: 1.2;
 }
 
 .sftp-context-action:hover:not(:disabled) {
@@ -615,12 +616,12 @@ body.window-titlebar-overlay .header-functions {
 
 .sftp-context-meta {
   color: #8ea7d2;
-  font-size: 0.78rem;
+  font-size: 0.69rem;
 }
 
 .sftp-context-separator {
   height: 1px;
-  margin: 4px 6px;
+  margin: 1px 4px;
   background: rgb(102 123 160 / 38%);
 }
 
