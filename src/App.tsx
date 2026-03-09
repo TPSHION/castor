@@ -550,7 +550,7 @@ export function App() {
             ? 'window-body workspace-body'
             : contentView === 'sftp'
               ? 'window-body sftp-body'
-              : 'window-body'
+              : 'window-body servers-body'
         }
       >
         {renderBody()}

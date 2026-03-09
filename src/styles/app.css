@@ -222,6 +222,18 @@ body.window-titlebar-overlay .header-functions {
   background: #c9ced3;
 }
 
+.window-body.servers-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.window-body.servers-body > .view-page {
+  height: 100%;
+  min-height: 0;
+}
+
 .window-body.sftp-body {
   display: flex;
   flex-direction: column;
@@ -254,21 +266,29 @@ body.window-titlebar-overlay .header-functions {
 }
 
 .servers-page {
+  width: 100%;
+  height: 100%;
   min-height: 100%;
   display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: 12px;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 0;
+  background: var(--panel);
 }
 
 .servers-sidebar {
-  display: grid;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   align-content: start;
-  gap: 8px;
+  gap: 6px;
+  padding: 6px;
+  border-right: 1px solid var(--border);
 }
 
 .servers-sidebar-title {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 0.95rem;
+  color: var(--muted);
 }
 
 .servers-nav-btn {
@@ -278,6 +298,7 @@ body.window-titlebar-overlay .header-functions {
   justify-content: space-between;
   gap: 8px;
   text-align: left;
+  padding: 4px 8px;
 }
 
 .servers-nav-btn.active {
@@ -285,14 +306,13 @@ body.window-titlebar-overlay .header-functions {
   background: #2c4571;
 }
 
-.servers-sidebar-meta {
-  margin: 6px 0 0;
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-
 .servers-content {
+  height: 100%;
   min-width: 0;
+  padding: 12px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
 }
 
 .sftp-dual-page {
@@ -1316,13 +1336,20 @@ button.danger {
   }
 
   .servers-sidebar {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-content: stretch;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    flex-direction: row;
+    align-items: center;
+    padding: 4px 6px;
   }
 
-  .servers-sidebar-title,
-  .servers-sidebar-meta {
-    grid-column: 1 / -1;
+  .servers-sidebar-title {
+    white-space: nowrap;
+  }
+
+  .servers-nav-btn {
+    width: auto;
+    flex: 1 1 0;
   }
 
   .host-grid,
