@@ -19,6 +19,7 @@
         "minWidth": 1000,
         "minHeight": 700,
         "resizable": true,
+        "backgroundColor": "#111827",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true
       }
