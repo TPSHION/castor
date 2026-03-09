@@ -4,14 +4,17 @@ import {
   applySystemdDeployService,
   controlSystemdDeployService,
   deleteSystemdDeployService,
+  getRemoteSystemdServiceTemplate,
   getSystemdDeployServiceLogs,
   getSystemdDeployServiceStatus,
+  listRemoteSystemdServices,
   listSystemdDeployServices,
   upsertSystemdDeployService
 } from '../app/api/profiles';
 import { formatInvokeError } from '../app/helpers';
 import type {
   ConnectionProfile,
+  RemoteSystemdServiceItem,
   SystemdDeployService,
   SystemdLogOutputMode,
   SystemdScope,
@@ -291,6 +294,12 @@ export function ServersView({
   const [systemdMessage, setSystemdMessage] = useState<string | null>(null);
   const [systemdMessageIsError, setSystemdMessageIsError] = useState(false);
   const [systemdSubmitAction, setSystemdSubmitAction] = useState<'save' | 'save-and-deploy' | null>(null);
+  const [systemdImportPanelOpen, setSystemdImportPanelOpen] = useState(false);
+  const [systemdRemoteServicesBusy, setSystemdRemoteServicesBusy] = useState(false);
+  const [systemdImportBusy, setSystemdImportBusy] = useState(false);
+  const [systemdRemoteServices, setSystemdRemoteServices] = useState<RemoteSystemdServiceItem[]>([]);
+  const [systemdSelectedRemoteServiceName, setSystemdSelectedRemoteServiceName] = useState('');
+  const [systemdRemoteServiceKeyword, setSystemdRemoteServiceKeyword] = useState('');
   const systemdDetailLogsCursorRef = useRef<string | null>(null);
   const systemdDetailLogsRealtimeRef = useRef(false);
   const pendingSystemdLogLinesRef = useRef<string[]>([]);
@@ -319,6 +328,31 @@ export function ServersView({
     () => SYSTEMD_EXECSTART_EXAMPLES[systemdForm.serviceType],
     [systemdForm.serviceType]
   );
+  const existingSystemdServiceNameSet = useMemo(() => {
+    const names = new Set<string>();
+    for (const item of systemdServices) {
+      names.add(normalizeComparableServiceName(item.service_name));
+    }
+    return names;
+  }, [systemdServices]);
+  const filteredSystemdRemoteServices = useMemo(() => {
+    const keyword = systemdRemoteServiceKeyword.trim().toLowerCase();
+    if (!keyword) {
+      return systemdRemoteServices;
+    }
+    return systemdRemoteServices.filter((item) => {
+      return (
+        item.service_name.toLowerCase().includes(keyword) ||
+        item.unit_file_state.toLowerCase().includes(keyword)
+      );
+    });
+  }, [systemdRemoteServiceKeyword, systemdRemoteServices]);
+  const selectedRemoteServiceAlreadyAdded = useMemo(() => {
+    if (!systemdSelectedRemoteServiceName) {
+      return false;
+    }
+    return existingSystemdServiceNameSet.has(normalizeComparableServiceName(systemdSelectedRemoteServiceName));
+  }, [existingSystemdServiceNameSet, systemdSelectedRemoteServiceName]);
   const systemdDuplicateService = useMemo(() => {
     const normalizedServiceName = normalizeComparableServiceName(systemdForm.serviceName);
     if (!normalizedServiceName) {
@@ -430,6 +464,24 @@ export function ServersView({
   }, [profiles]);
 
   useEffect(() => {
+    if (!systemdImportPanelOpen) {
+      return;
+    }
+    if (filteredSystemdRemoteServices.length === 0) {
+      if (systemdSelectedRemoteServiceName) {
+        setSystemdSelectedRemoteServiceName('');
+      }
+      return;
+    }
+    const exists = filteredSystemdRemoteServices.some(
+      (item) => item.service_name === systemdSelectedRemoteServiceName
+    );
+    if (!exists) {
+      setSystemdSelectedRemoteServiceName(filteredSystemdRemoteServices[0].service_name);
+    }
+  }, [filteredSystemdRemoteServices, systemdImportPanelOpen, systemdSelectedRemoteServiceName]);
+
+  useEffect(() => {
     systemdDetailLogsCursorRef.current = systemdDetailLogsCursor;
   }, [systemdDetailLogsCursor]);
 
@@ -501,6 +553,10 @@ export function ServersView({
   const onStartCreateSystemd = () => {
     setSystemdMessage(null);
     setSystemdMessageIsError(false);
+    setSystemdImportPanelOpen(false);
+    setSystemdRemoteServices([]);
+    setSystemdSelectedRemoteServiceName('');
+    setSystemdRemoteServiceKeyword('');
     setSystemdForm(createSystemdForm(profiles[0] ?? null));
     setSystemdMode('create');
   };
@@ -508,8 +564,96 @@ export function ServersView({
   const onEditSystemd = (service: SystemdDeployService) => {
     setSystemdMessage(null);
     setSystemdMessageIsError(false);
+    setSystemdImportPanelOpen(false);
+    setSystemdRemoteServices([]);
+    setSystemdSelectedRemoteServiceName('');
+    setSystemdRemoteServiceKeyword('');
     setSystemdForm(toSystemdForm(service, profiles));
     setSystemdMode('edit');
+  };
+
+  const loadRemoteSystemdServiceList = useCallback(async () => {
+    if (!systemdForm.profileId) {
+      setSystemdMessage('请先选择目标服务器');
+      setSystemdMessageIsError(true);
+      return;
+    }
+
+    setSystemdRemoteServicesBusy(true);
+    try {
+      const items = await listRemoteSystemdServices({
+        profile_id: systemdForm.profileId,
+        scope: systemdForm.scope,
+        use_sudo: systemdForm.scope === 'system' ? systemdForm.useSudo : false
+      });
+      setSystemdRemoteServices(items);
+      setSystemdSelectedRemoteServiceName((previous) => {
+        if (previous && items.some((item) => item.service_name === previous)) {
+          return previous;
+        }
+        return items[0]?.service_name ?? '';
+      });
+    } catch (invokeError) {
+      setSystemdMessage(`读取现有 systemd 服务失败：${formatInvokeError(invokeError)}`);
+      setSystemdMessageIsError(true);
+    } finally {
+      setSystemdRemoteServicesBusy(false);
+    }
+  }, [systemdForm.profileId, systemdForm.scope, systemdForm.useSudo]);
+
+  const onOpenSystemdImportPanel = () => {
+    if (!systemdForm.profileId) {
+      setSystemdMessage('请先选择目标服务器');
+      setSystemdMessageIsError(true);
+      return;
+    }
+    setSystemdImportPanelOpen(true);
+    setSystemdRemoteServiceKeyword('');
+    void loadRemoteSystemdServiceList();
+  };
+
+  const onImportRemoteSystemdService = async () => {
+    if (!systemdForm.profileId || !systemdSelectedRemoteServiceName) {
+      return;
+    }
+
+    setSystemdImportBusy(true);
+    try {
+      const template = await getRemoteSystemdServiceTemplate({
+        profile_id: systemdForm.profileId,
+        service_name: systemdSelectedRemoteServiceName,
+        scope: systemdForm.scope,
+        use_sudo: systemdForm.scope === 'system' ? systemdForm.useSudo : false
+      });
+
+      setSystemdForm((previous) => {
+        const nextServiceName = template.service_name || previous.serviceName;
+        const prevDefaultPath = defaultSystemdLogOutputPath(previous.serviceName);
+        const shouldSyncPath = !previous.logOutputPath.trim() || previous.logOutputPath === prevDefaultPath;
+        const nextExecStart = template.exec_start?.trim() || previous.execStart;
+        return {
+          ...previous,
+          name: previous.name.trim() ? previous.name : nextServiceName,
+          serviceName: nextServiceName,
+          description: template.description ?? previous.description,
+          workingDir: template.working_dir ?? previous.workingDir,
+          execStart: nextExecStart,
+          execStop: template.exec_stop ?? '',
+          serviceUser: previous.scope === 'system' ? (template.service_user ?? previous.serviceUser) : previous.serviceUser,
+          environmentText: template.environment?.join('\n') ?? '',
+          serviceType: inferServiceType(nextExecStart),
+          logOutputPath: shouldSyncPath ? defaultSystemdLogOutputPath(nextServiceName) : previous.logOutputPath
+        };
+      });
+      setSystemdImportPanelOpen(false);
+      setSystemdMessage(`已导入服务：${template.service_name}.service，请确认后保存`);
+      setSystemdMessageIsError(false);
+    } catch (invokeError) {
+      setSystemdMessage(`导入 systemd 服务失败：${formatInvokeError(invokeError)}`);
+      setSystemdMessageIsError(true);
+    } finally {
+      setSystemdImportBusy(false);
+    }
   };
 
   const refreshSystemdDetailStatus = useCallback(async (serviceId: string) => {
@@ -650,6 +794,10 @@ export function ServersView({
     setSystemdDetailServiceId(null);
     setSystemdDetailStatus(null);
     setSystemdDetailAction(null);
+    setSystemdImportPanelOpen(false);
+    setSystemdRemoteServices([]);
+    setSystemdSelectedRemoteServiceName('');
+    setSystemdRemoteServiceKeyword('');
     resetSystemdLogBuffer();
     setSystemdDetailLogsBusy(false);
     setSystemdDetailLogsRealtime(false);
@@ -1294,6 +1442,15 @@ export function ServersView({
                   </button>
                   <h2>{systemdMode === 'create' ? '新增部署服务' : '编辑部署服务'}</h2>
                   <div className="section-actions">
+                    {systemdMode === 'create' && (
+                      <button
+                        type="button"
+                        onClick={onOpenSystemdImportPanel}
+                        disabled={systemdBusy || systemdRemoteServicesBusy || systemdImportBusy || profiles.length === 0}
+                      >
+                        从已有服务导入
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => void onSubmitSystemdForm('save')}
@@ -1315,6 +1472,86 @@ export function ServersView({
                   <p className="status-line">可选择“仅保存”或“保存并部署”（生成/更新 unit + daemon-reload + enable(可选) + restart）。</p>
                   {systemdMessage && (
                     <p className={systemdMessageIsError ? 'status-line error' : 'status-line'}>{systemdMessage}</p>
+                  )}
+                  {systemdImportPanelOpen && (
+                    <article className="host-card systemd-import-panel">
+                      <header className="host-card-header">
+                        <div>
+                          <h3>从现有 systemd 服务导入</h3>
+                          <p>将读取目标服务器当前 scope 下已存在的服务配置并填充表单</p>
+                        </div>
+                        <div className="card-actions">
+                          <button
+                            type="button"
+                            onClick={() => void loadRemoteSystemdServiceList()}
+                            disabled={systemdRemoteServicesBusy || systemdImportBusy}
+                          >
+                            {systemdRemoteServicesBusy ? '加载中...' : '刷新列表'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSystemdImportPanelOpen(false)}
+                            disabled={systemdImportBusy}
+                          >
+                            关闭
+                          </button>
+                        </div>
+                      </header>
+
+                      {systemdRemoteServices.length === 0 ? (
+                        <p className="systemd-service-meta">当前服务器未读取到可导入的服务。</p>
+                      ) : (
+                        <>
+                          <label className="field-label">
+                            搜索服务
+                            <input
+                              value={systemdRemoteServiceKeyword}
+                              onChange={(event) => setSystemdRemoteServiceKeyword(event.target.value)}
+                              placeholder="输入服务名或状态关键字"
+                              disabled={systemdRemoteServicesBusy || systemdImportBusy}
+                              {...textInputProps}
+                            />
+                          </label>
+                          {filteredSystemdRemoteServices.length === 0 ? (
+                            <p className="systemd-service-meta">未匹配到服务，请调整搜索关键字。</p>
+                          ) : (
+                            <label className="field-label">
+                              选择已有服务
+                              <select
+                                value={systemdSelectedRemoteServiceName}
+                                onChange={(event) => setSystemdSelectedRemoteServiceName(event.target.value)}
+                                disabled={systemdRemoteServicesBusy || systemdImportBusy}
+                              >
+                                {filteredSystemdRemoteServices.map((item) => {
+                                  const alreadyAdded = existingSystemdServiceNameSet.has(
+                                    normalizeComparableServiceName(item.service_name)
+                                  );
+                                  return (
+                                    <option key={item.service_name} value={item.service_name}>
+                                      {item.service_name}.service ({item.unit_file_state})
+                                      {alreadyAdded ? ' · 已添加' : ''}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                              {selectedRemoteServiceAlreadyAdded && (
+                                <span className="systemd-import-hint">该服务已在本地部署列表中（已添加）。</span>
+                              )}
+                            </label>
+                          )}
+                        </>
+                      )}
+
+                      <div className="card-actions">
+                        <button
+                          type="button"
+                          onClick={() => void onImportRemoteSystemdService()}
+                          disabled={!systemdSelectedRemoteServiceName || systemdRemoteServicesBusy || systemdImportBusy}
+                        >
+                          {systemdImportBusy ? '导入中...' : '导入配置到表单'}
+                        </button>
+                      </div>
+                    </article>
                   )}
 
                   <div className="systemd-form-grid">

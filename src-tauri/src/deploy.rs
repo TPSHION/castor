@@ -138,6 +138,38 @@ pub struct SystemdServiceLogsResult {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ListRemoteSystemdServicesRequest {
+    pub profile_id: String,
+    pub scope: Option<SystemdScope>,
+    pub use_sudo: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemoteSystemdServiceItem {
+    pub service_name: String,
+    pub unit_file_state: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GetRemoteSystemdServiceTemplateRequest {
+    pub profile_id: String,
+    pub service_name: String,
+    pub scope: Option<SystemdScope>,
+    pub use_sudo: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemoteSystemdServiceTemplate {
+    pub service_name: String,
+    pub description: Option<String>,
+    pub working_dir: Option<String>,
+    pub exec_start: Option<String>,
+    pub exec_stop: Option<String>,
+    pub service_user: Option<String>,
+    pub environment: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct DeploySystemdServiceRequest {
     pub profile_id: String,
     pub service_name: String,
@@ -448,6 +480,35 @@ pub fn control_systemd_deploy_service(
     })
 }
 
+pub fn list_remote_systemd_services(
+    app: &AppHandle,
+    request: ListRemoteSystemdServicesRequest,
+) -> Result<Vec<RemoteSystemdServiceItem>, String> {
+    validate_profile_exists(app, &request.profile_id)?;
+    let profile = find_profile(app, &request.profile_id)?;
+    let scope = request.scope.unwrap_or(SystemdScope::System);
+    let use_sudo = request.use_sudo.unwrap_or(matches!(scope, SystemdScope::System));
+
+    with_pooled_session(&profile, |session| {
+        query_remote_systemd_services(session, scope, use_sudo)
+    })
+}
+
+pub fn get_remote_systemd_service_template(
+    app: &AppHandle,
+    request: GetRemoteSystemdServiceTemplateRequest,
+) -> Result<RemoteSystemdServiceTemplate, String> {
+    validate_profile_exists(app, &request.profile_id)?;
+    let profile = find_profile(app, &request.profile_id)?;
+    let scope = request.scope.unwrap_or(SystemdScope::System);
+    let use_sudo = request.use_sudo.unwrap_or(matches!(scope, SystemdScope::System));
+    let normalized_service_name = normalize_service_name(&request.service_name)?;
+
+    with_pooled_session(&profile, |session| {
+        query_remote_systemd_service_template(session, &normalized_service_name, scope, use_sudo)
+    })
+}
+
 pub fn get_systemd_deploy_service_logs(
     app: &AppHandle,
     request: GetSystemdDeployServiceLogsRequest,
@@ -673,6 +734,69 @@ fn query_service_logs(
     Ok(parse_journalctl_output(&stdout, cursor))
 }
 
+fn query_remote_systemd_services(
+    session: &mut Session,
+    scope: SystemdScope,
+    use_sudo: bool,
+) -> Result<Vec<RemoteSystemdServiceItem>, String> {
+    let prefix = systemctl_prefix(scope, use_sudo);
+    let script = format!(
+        "set -euo pipefail\n{prefix} list-unit-files --type=service --no-legend --no-pager"
+    );
+    let (stdout, stderr, exit_status) = run_remote_script(session, &script)?;
+    if exit_status != 0 {
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        return Err(format!(
+            "failed to list remote systemd services (exit code {exit_status}): {}",
+            if detail.is_empty() {
+                "unknown error"
+            } else {
+                detail
+            }
+        ));
+    }
+    Ok(parse_remote_systemd_service_items(&stdout))
+}
+
+fn query_remote_systemd_service_template(
+    session: &mut Session,
+    service_name: &str,
+    scope: SystemdScope,
+    use_sudo: bool,
+) -> Result<RemoteSystemdServiceTemplate, String> {
+    let prefix = systemctl_prefix(scope, use_sudo);
+    let service_file = service_file_name(service_name);
+    let script = format!(
+        "set -euo pipefail\n{prefix} cat {}",
+        shell_quote(&service_file)
+    );
+    let (stdout, stderr, exit_status) = run_remote_script(session, &script)?;
+    if exit_status != 0 {
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        return Err(format!(
+            "failed to read remote systemd service {} (exit code {exit_status}): {}",
+            service_file,
+            if detail.is_empty() {
+                "unknown error"
+            } else {
+                detail
+            }
+        ));
+    }
+    Ok(parse_remote_service_template_from_unit_content(
+        &stdout,
+        service_name,
+    ))
+}
+
 fn query_service_file_logs(
     session: &mut Session,
     log_path: &str,
@@ -774,6 +898,141 @@ fn parse_file_log_cursor(cursor: Option<&str>) -> (Option<u64>, Option<u64>) {
     }
 
     (None, value.parse::<u64>().ok())
+}
+
+fn parse_remote_systemd_service_items(raw: &str) -> Vec<RemoteSystemdServiceItem> {
+    let mut items = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut parts = trimmed.split_whitespace();
+        let unit_file = parts.next().unwrap_or("");
+        if !unit_file.ends_with(".service") || unit_file.ends_with("@.service") {
+            continue;
+        }
+        let state = parts.next().unwrap_or("unknown");
+        let service_name = match unit_file.strip_suffix(".service") {
+            Some(name) if !name.trim().is_empty() => name.trim(),
+            _ => continue,
+        };
+        items.push(RemoteSystemdServiceItem {
+            service_name: service_name.to_string(),
+            unit_file_state: state.to_string(),
+        });
+    }
+    items.sort_by(|a, b| a.service_name.cmp(&b.service_name));
+    items
+}
+
+fn parse_remote_service_template_from_unit_content(
+    raw: &str,
+    service_name: &str,
+) -> RemoteSystemdServiceTemplate {
+    let mut section = String::new();
+    let mut description: Option<String> = None;
+    let mut working_dir: Option<String> = None;
+    let mut exec_start: Option<String> = None;
+    let mut exec_stop: Option<String> = None;
+    let mut service_user: Option<String> = None;
+    let mut environment: Vec<String> = Vec::new();
+
+    for line in unit_file_logical_lines(raw) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+            continue;
+        }
+
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            section = trimmed[1..trimmed.len() - 1].trim().to_ascii_lowercase();
+            continue;
+        }
+
+        let Some((raw_key, raw_value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = raw_key.trim();
+        let value = normalize_unit_file_value(raw_value);
+        if value.is_empty() {
+            continue;
+        }
+
+        if section == "unit" {
+            if key.eq_ignore_ascii_case("Description") && description.is_none() {
+                description = Some(value);
+            }
+            continue;
+        }
+
+        if section == "service" {
+            if key.eq_ignore_ascii_case("WorkingDirectory") && working_dir.is_none() {
+                working_dir = Some(value.clone());
+            } else if key.eq_ignore_ascii_case("ExecStart") && exec_start.is_none() {
+                exec_start = Some(value.clone());
+            } else if key.eq_ignore_ascii_case("ExecStop") && exec_stop.is_none() {
+                exec_stop = Some(value.clone());
+            } else if key.eq_ignore_ascii_case("User") && service_user.is_none() {
+                service_user = Some(value.clone());
+            } else if key.eq_ignore_ascii_case("Environment") {
+                environment.push(value.clone());
+            }
+        }
+    }
+
+    RemoteSystemdServiceTemplate {
+        service_name: service_name.to_string(),
+        description,
+        working_dir,
+        exec_start,
+        exec_stop,
+        service_user,
+        environment: if environment.is_empty() {
+            None
+        } else {
+            Some(environment)
+        },
+    }
+}
+
+fn unit_file_logical_lines(raw: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+
+    for raw_line in raw.lines() {
+        let line = raw_line.trim_end_matches('\r');
+        if current.is_empty() {
+            current.push_str(line);
+        } else {
+            current.push_str(line.trim_start());
+        }
+
+        if current.ends_with('\\') {
+            current.pop();
+            continue;
+        }
+
+        lines.push(current.clone());
+        current.clear();
+    }
+
+    if !current.trim().is_empty() {
+        lines.push(current);
+    }
+
+    lines
+}
+
+fn normalize_unit_file_value(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.len() >= 2 {
+        let first = trimmed.as_bytes()[0];
+        let last = trimmed.as_bytes()[trimmed.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            return trimmed[1..trimmed.len() - 1].trim().to_string();
+        }
+    }
+    trimmed.to_string()
 }
 
 fn parse_journalctl_output(raw: &str, previous_cursor: Option<&str>) -> SystemdServiceLogsResult {

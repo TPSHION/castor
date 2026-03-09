@@ -330,3 +330,31 @@ export type SystemdServiceLogsResult = {
   lines: string[];
   cursor?: string;
 };
+
+export type ListRemoteSystemdServicesRequest = {
+  profile_id: string;
+  scope?: SystemdScope;
+  use_sudo?: boolean;
+};
+
+export type RemoteSystemdServiceItem = {
+  service_name: string;
+  unit_file_state: string;
+};
+
+export type GetRemoteSystemdServiceTemplateRequest = {
+  profile_id: string;
+  service_name: string;
+  scope?: SystemdScope;
+  use_sudo?: boolean;
+};
+
+export type RemoteSystemdServiceTemplate = {
+  service_name: string;
+  description?: string;
+  working_dir?: string;
+  exec_start?: string;
+  exec_stop?: string;
+  service_user?: string;
+  environment?: string[];
+};

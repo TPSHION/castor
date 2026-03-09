@@ -3,11 +3,15 @@ import type {
   ConnectRequest,
   ControlSystemdDeployServiceRequest,
   ConnectionProfile,
+  GetRemoteSystemdServiceTemplateRequest,
   DeleteSystemdDeployServiceRequest,
   DeploySystemdServiceRequest,
   DeploySystemdServiceResult,
   GetSystemdDeployServiceLogsRequest,
   GetSystemdDeployServiceStatusRequest,
+  ListRemoteSystemdServicesRequest,
+  RemoteSystemdServiceItem,
+  RemoteSystemdServiceTemplate,
   SystemdDeployService,
   SystemdServiceActionResult,
   SystemdServiceLogsResult,
@@ -83,6 +87,20 @@ export function getSystemdDeployServiceLogs(request: GetSystemdDeployServiceLogs
 export function controlSystemdDeployService(request: ControlSystemdDeployServiceRequest) {
   return invokeTauriWithRequest<SystemdServiceActionResult, ControlSystemdDeployServiceRequest>(
     'control_systemd_deploy_service',
+    request
+  );
+}
+
+export function listRemoteSystemdServices(request: ListRemoteSystemdServicesRequest) {
+  return invokeTauriWithRequest<RemoteSystemdServiceItem[], ListRemoteSystemdServicesRequest>(
+    'list_remote_systemd_services',
+    request
+  );
+}
+
+export function getRemoteSystemdServiceTemplate(request: GetRemoteSystemdServiceTemplateRequest) {
+  return invokeTauriWithRequest<RemoteSystemdServiceTemplate, GetRemoteSystemdServiceTemplateRequest>(
+    'get_remote_systemd_service_template',
     request
   );
 }

@@ -1072,6 +1072,17 @@ button.danger {
   grid-column: 1 / -1;
 }
 
+.systemd-import-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.systemd-import-hint {
+  color: #e7ba7f;
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
 .systemd-service-type-list {
   display: flex;
   flex-wrap: wrap;

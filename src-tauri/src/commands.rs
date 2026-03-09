@@ -5,13 +5,17 @@ use crate::deploy::{
     control_systemd_deploy_service as control_systemd_deploy_service_impl,
     delete_systemd_deploy_service as delete_systemd_deploy_service_impl,
     deploy_systemd_service as deploy_systemd_service_impl,
+    get_remote_systemd_service_template as get_remote_systemd_service_template_impl,
     get_systemd_deploy_service_logs as get_systemd_deploy_service_logs_impl,
     get_systemd_deploy_service_status as get_systemd_deploy_service_status_impl,
+    list_remote_systemd_services as list_remote_systemd_services_impl,
     list_systemd_deploy_services as list_systemd_deploy_services_impl,
     upsert_systemd_deploy_service as upsert_systemd_deploy_service_impl,
     ApplySystemdDeployServiceRequest, ControlSystemdDeployServiceRequest,
     DeleteSystemdDeployServiceRequest, DeploySystemdServiceRequest, DeploySystemdServiceResult,
-    GetSystemdDeployServiceLogsRequest, GetSystemdDeployServiceStatusRequest, SystemdDeployService,
+    GetRemoteSystemdServiceTemplateRequest, GetSystemdDeployServiceLogsRequest,
+    GetSystemdDeployServiceStatusRequest, ListRemoteSystemdServicesRequest,
+    RemoteSystemdServiceItem, RemoteSystemdServiceTemplate, SystemdDeployService,
     SystemdServiceActionResult, SystemdServiceLogsResult, SystemdServiceStatus,
     UpsertSystemdDeployServiceRequest,
 };
@@ -285,4 +289,30 @@ pub async fn control_systemd_deploy_service(
     })
     .await
     .map_err(|err| format!("failed to join systemd control task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn list_remote_systemd_services(
+    app: AppHandle,
+    request: ListRemoteSystemdServicesRequest,
+) -> Result<Vec<RemoteSystemdServiceItem>, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        list_remote_systemd_services_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join list remote systemd services task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn get_remote_systemd_service_template(
+    app: AppHandle,
+    request: GetRemoteSystemdServiceTemplateRequest,
+) -> Result<RemoteSystemdServiceTemplate, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        get_remote_systemd_service_template_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join get remote systemd service template task: {err}"))?
 }
