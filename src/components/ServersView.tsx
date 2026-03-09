@@ -12,6 +12,7 @@ import { formatInvokeError } from '../app/helpers';
 import type {
   ConnectionProfile,
   SystemdDeployService,
+  SystemdLogOutputMode,
   SystemdScope,
   SystemdServiceStatus,
   UpsertSystemdDeployServiceRequest
@@ -45,6 +46,14 @@ type SystemdFormState = {
   environmentText: string;
   enableOnBoot: boolean;
   useSudo: boolean;
+  logOutputMode: SystemdLogOutputMode;
+  logOutputPath: string;
+};
+
+type SystemdDeleteDialogState = {
+  id: string;
+  name: string;
+  from: 'list' | 'detail';
 };
 
 type SystemdServiceType = 'node' | 'python' | 'java' | 'go' | 'dotnet' | 'docker' | 'custom';
@@ -52,6 +61,11 @@ type SystemdServiceType = 'node' | 'python' | 'java' | 'go' | 'dotnet' | 'docker
 const SYSTEMD_SERVICE_TYPES: SystemdServiceType[] = ['node', 'python', 'java', 'go', 'dotnet', 'docker', 'custom'];
 const SYSTEMD_LOG_FETCH_LINES = 200;
 const SYSTEMD_LOG_MAX_LINES = 1000;
+const SYSTEMD_LOG_OUTPUT_MODE_OPTIONS: Array<{ value: SystemdLogOutputMode; label: string }> = [
+  { value: 'journal', label: 'systemd journal (默认)' },
+  { value: 'file', label: '输出到文件' },
+  { value: 'none', label: '不输出日志' }
+];
 
 const SYSTEMD_EXECSTART_EXAMPLES: Record<SystemdServiceType, { label: string; examples: string[] }> = {
   node: {
@@ -110,11 +124,43 @@ function inferServiceType(execStart: string): SystemdServiceType {
   return 'custom';
 }
 
+function systemdLogOutputModeLabel(mode: SystemdLogOutputMode): string {
+  if (mode === 'file') {
+    return '输出到文件';
+  }
+  if (mode === 'none') {
+    return '不输出日志';
+  }
+  return 'systemd journal';
+}
+
+function firstExecStartExample(type: SystemdServiceType): string {
+  return SYSTEMD_EXECSTART_EXAMPLES[type].examples[0] ?? '';
+}
+
+function defaultSystemdLogOutputPath(serviceName: string): string {
+  const normalized = serviceName
+    .trim()
+    .replace(/\.service$/i, '')
+    .replace(/[^A-Za-z0-9._@-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  const safeName = normalized || 'my-app';
+  return `/var/log/${safeName}.log`;
+}
+
+function systemdLogOutputPathLabel(service: SystemdDeployService): string {
+  if (service.log_output_mode === 'none') {
+    return '未启用';
+  }
+  return service.log_output_path?.trim() || defaultSystemdLogOutputPath(service.service_name);
+}
+
 function createSystemdForm(profile?: ConnectionProfile | null): SystemdFormState {
+  const serviceName = 'my-app';
   return {
     profileId: profile?.id ?? '',
     name: '',
-    serviceName: 'my-app',
+    serviceName,
     serviceType: 'node',
     scope: 'system',
     description: 'Managed by Castor',
@@ -124,7 +170,9 @@ function createSystemdForm(profile?: ConnectionProfile | null): SystemdFormState
     serviceUser: profile?.username ?? '',
     environmentText: '',
     enableOnBoot: true,
-    useSudo: true
+    useSudo: true,
+    logOutputMode: 'journal',
+    logOutputPath: defaultSystemdLogOutputPath(serviceName)
   };
 }
 
@@ -144,7 +192,9 @@ function toSystemdForm(service: SystemdDeployService, profiles: ConnectionProfil
     serviceUser: service.service_user ?? profile?.username ?? '',
     environmentText: (service.environment ?? []).join('\n'),
     enableOnBoot: service.enable_on_boot,
-    useSudo: service.use_sudo
+    useSudo: service.use_sudo,
+    logOutputMode: service.log_output_mode ?? 'journal',
+    logOutputPath: service.log_output_path ?? defaultSystemdLogOutputPath(service.service_name)
   };
 }
 
@@ -173,6 +223,8 @@ export function ServersView({
   const [systemdForm, setSystemdForm] = useState<SystemdFormState>(() => createSystemdForm(null));
   const [systemdServices, setSystemdServices] = useState<SystemdDeployService[]>([]);
   const [systemdBusy, setSystemdBusy] = useState(false);
+  const [systemdDeletingServiceId, setSystemdDeletingServiceId] = useState<string | null>(null);
+  const [systemdDeleteDialog, setSystemdDeleteDialog] = useState<SystemdDeleteDialogState | null>(null);
   const [systemdDetailStatusBusy, setSystemdDetailStatusBusy] = useState(false);
   const [systemdDetailStatus, setSystemdDetailStatus] = useState<SystemdServiceStatus | null>(null);
   const [systemdDetailAction, setSystemdDetailAction] = useState<'start' | 'stop' | 'restart' | 'delete' | null>(null);
@@ -180,9 +232,12 @@ export function ServersView({
   const [systemdDetailLogsRealtime, setSystemdDetailLogsRealtime] = useState(false);
   const [systemdDetailLogs, setSystemdDetailLogs] = useState<string[]>([]);
   const [systemdDetailLogsCursor, setSystemdDetailLogsCursor] = useState<string | null>(null);
+  const [systemdLogFullscreen, setSystemdLogFullscreen] = useState(false);
   const [systemdMessage, setSystemdMessage] = useState<string | null>(null);
   const [systemdMessageIsError, setSystemdMessageIsError] = useState(false);
   const systemdDetailLogsCursorRef = useRef<string | null>(null);
+  const systemdLogPanelRef = useRef<HTMLPreElement | null>(null);
+  const systemdLogFullscreenRef = useRef<HTMLPreElement | null>(null);
 
   const profileNameMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -208,6 +263,9 @@ export function ServersView({
   const canDetailStart = !systemdBusy && !systemdDetailStatusBusy && !systemdDetailAction && !isDetailRunning;
   const canDetailStop = !systemdBusy && !systemdDetailStatusBusy && !systemdDetailAction && isDetailRunning;
   const detailStatusActionDisabled = systemdBusy || systemdDetailStatusBusy || Boolean(systemdDetailAction);
+  const canReadSystemdLogs = Boolean(
+    selectedSystemdDetailService && selectedSystemdDetailService.log_output_mode !== 'none'
+  );
 
   const systemdValidation = useMemo(() => {
     if (!systemdForm.profileId) {
@@ -224,6 +282,9 @@ export function ServersView({
     }
     if (!systemdForm.execStart.trim()) {
       return '启动命令不能为空';
+    }
+    if (systemdForm.logOutputMode === 'file' && !systemdForm.logOutputPath.trim()) {
+      return '日志输出为文件时，日志路径不能为空';
     }
     return null;
   }, [systemdForm]);
@@ -250,6 +311,38 @@ export function ServersView({
   useEffect(() => {
     systemdDetailLogsCursorRef.current = systemdDetailLogsCursor;
   }, [systemdDetailLogsCursor]);
+
+  useEffect(() => {
+    if (!systemdDetailLogsRealtime) {
+      return;
+    }
+    const timer = window.requestAnimationFrame(() => {
+      if (systemdLogPanelRef.current) {
+        systemdLogPanelRef.current.scrollTop = systemdLogPanelRef.current.scrollHeight;
+      }
+      if (systemdLogFullscreenRef.current) {
+        systemdLogFullscreenRef.current.scrollTop = systemdLogFullscreenRef.current.scrollHeight;
+      }
+    });
+    return () => {
+      window.cancelAnimationFrame(timer);
+    };
+  }, [systemdDetailLogs, systemdDetailLogsRealtime, systemdLogFullscreen]);
+
+  useEffect(() => {
+    if (!systemdLogFullscreen) {
+      return;
+    }
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSystemdLogFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => {
+      window.removeEventListener('keydown', onEsc);
+    };
+  }, [systemdLogFullscreen]);
 
   const refreshSystemdList = useCallback(async () => {
     setSystemdBusy(true);
@@ -362,9 +455,9 @@ export function ServersView({
     setSystemdDetailLogs([]);
     setSystemdDetailLogsCursor(null);
     setSystemdDetailLogsRealtime(false);
+    setSystemdLogFullscreen(false);
     setSystemdMode('detail');
     void refreshSystemdDetailStatus(service.id);
-    void loadSystemdDetailLogs(service.id, false);
   };
 
   const onBackSystemdList = () => {
@@ -375,12 +468,13 @@ export function ServersView({
     setSystemdDetailLogsRealtime(false);
     setSystemdDetailLogs([]);
     setSystemdDetailLogsCursor(null);
+    setSystemdLogFullscreen(false);
     setSystemdMode('list');
     void refreshSystemdList();
   };
 
   const onToggleSystemdRealtimeLogs = () => {
-    if (!selectedSystemdDetailService) {
+    if (!selectedSystemdDetailService || !canReadSystemdLogs) {
       return;
     }
     if (systemdDetailLogsRealtime) {
@@ -388,11 +482,15 @@ export function ServersView({
       return;
     }
     setSystemdDetailLogsRealtime(true);
-    void loadSystemdDetailLogs(selectedSystemdDetailService.id, true, true);
+    const shouldLoadSnapshot = systemdDetailLogs.length === 0 && !systemdDetailLogsCursorRef.current;
+    void loadSystemdDetailLogs(selectedSystemdDetailService.id, !shouldLoadSnapshot, true);
   };
 
   const onDetailControlSystemd = async (action: 'start' | 'stop' | 'restart') => {
     if (!selectedSystemdDetailService) {
+      return;
+    }
+    if (systemdDetailAction === 'delete') {
       return;
     }
 
@@ -412,27 +510,26 @@ export function ServersView({
     }
   };
 
-  const onDeleteSystemdInDetail = async () => {
-    if (!selectedSystemdDetailService) {
+  const requestDeleteSystemdFromList = (service: SystemdDeployService) => {
+    if (systemdBusy) {
       return;
     }
-    const confirmed = window.confirm(`确认删除部署服务“${selectedSystemdDetailService.name}”吗？`);
-    if (!confirmed) {
-      return;
-    }
+    setSystemdDeleteDialog({
+      id: service.id,
+      name: service.name,
+      from: 'list'
+    });
+  };
 
-    setSystemdDetailAction('delete');
-    try {
-      await deleteSystemdDeployService({ id: selectedSystemdDetailService.id });
-      setSystemdMessage(`已删除部署服务：${selectedSystemdDetailService.name}`);
-      setSystemdMessageIsError(false);
-      onBackSystemdList();
-    } catch (invokeError) {
-      setSystemdMessage(`删除失败：${formatInvokeError(invokeError)}`);
-      setSystemdMessageIsError(true);
-    } finally {
-      setSystemdDetailAction(null);
+  const requestDeleteSystemdFromDetail = () => {
+    if (!selectedSystemdDetailService || detailStatusActionDisabled) {
+      return;
     }
+    setSystemdDeleteDialog({
+      id: selectedSystemdDetailService.id,
+      name: selectedSystemdDetailService.name,
+      from: 'detail'
+    });
   };
 
   const onSubmitSystemdForm = async () => {
@@ -470,7 +567,9 @@ export function ServersView({
       environment: environment.length > 0 ? environment : undefined,
       enable_on_boot: systemdForm.enableOnBoot,
       scope: systemdForm.scope,
-      use_sudo: systemdForm.scope === 'system' ? systemdForm.useSudo : false
+      use_sudo: systemdForm.scope === 'system' ? systemdForm.useSudo : false,
+      log_output_mode: systemdForm.logOutputMode,
+      log_output_path: systemdForm.logOutputMode === 'file' ? systemdForm.logOutputPath.trim() || undefined : undefined
     };
 
     setSystemdBusy(true);
@@ -491,25 +590,42 @@ export function ServersView({
     }
   };
 
-  const onDeleteSystemd = async (service: SystemdDeployService) => {
-    const confirmed = window.confirm(`确认删除部署服务“${service.name}”吗？`);
-    if (!confirmed) {
+  const onConfirmDeleteSystemd = async () => {
+    if (!systemdDeleteDialog) {
       return;
     }
+    const { id, name, from } = systemdDeleteDialog;
+    setSystemdDeleteDialog(null);
 
+    if (from === 'detail') {
+      setSystemdDetailAction('delete');
+    } else {
+      setSystemdDeletingServiceId(id);
+    }
     setSystemdBusy(true);
     try {
-      await deleteSystemdDeployService({ id: service.id });
-      setSystemdMessage(`已删除部署服务：${service.name}`);
+      await deleteSystemdDeployService({ id });
+      setSystemdMessage(`已删除部署服务：${name}`);
       setSystemdMessageIsError(false);
-      await refreshSystemdList();
+      if (from === 'detail') {
+        onBackSystemdList();
+      } else {
+        await refreshSystemdList();
+      }
     } catch (invokeError) {
       setSystemdMessage(`删除失败：${formatInvokeError(invokeError)}`);
       setSystemdMessageIsError(true);
     } finally {
+      if (from === 'detail') {
+        setSystemdDetailAction(null);
+      } else {
+        setSystemdDeletingServiceId(null);
+      }
       setSystemdBusy(false);
     }
   };
+
+  const isDeleteConfirmBusy = systemdBusy && (systemdDetailAction === 'delete' || Boolean(systemdDeletingServiceId));
 
   return (
     <div className="servers-page">
@@ -660,10 +776,10 @@ export function ServersView({
                             <button
                               type="button"
                               className="danger"
-                              onClick={() => void onDeleteSystemd(service)}
+                              onClick={() => requestDeleteSystemdFromList(service)}
                               disabled={systemdBusy}
                             >
-                              删除
+                              {systemdDeletingServiceId === service.id ? '删除中...' : '删除'}
                             </button>
                           </div>
                         </article>
@@ -730,7 +846,7 @@ export function ServersView({
                         <button
                           type="button"
                           className="danger"
-                          onClick={onDeleteSystemdInDetail}
+                          onClick={requestDeleteSystemdFromDetail}
                           disabled={detailStatusActionDisabled}
                         >
                           {systemdDetailAction === 'delete' ? '删除中...' : '删除'}
@@ -762,6 +878,12 @@ export function ServersView({
                         <p className="systemd-service-meta">Scope：{selectedSystemdDetailService.scope}</p>
                         <p className="systemd-service-meta">
                           开机自启：{selectedSystemdDetailService.enable_on_boot ? '是' : '否'}
+                        </p>
+                        <p className="systemd-service-meta">
+                          日志输出：{systemdLogOutputModeLabel(selectedSystemdDetailService.log_output_mode)}
+                        </p>
+                        <p className="systemd-service-meta">
+                          日志地址：{systemdLogOutputPathLabel(selectedSystemdDetailService)}
                         </p>
                         <p className="systemd-service-meta">工作目录：{selectedSystemdDetailService.working_dir}</p>
                       </article>
@@ -813,17 +935,22 @@ export function ServersView({
                             <button
                               type="button"
                               onClick={() => void loadSystemdDetailLogs(selectedSystemdDetailService.id, false)}
-                              disabled={systemdDetailLogsBusy}
+                              disabled={systemdDetailLogsBusy || !canReadSystemdLogs}
                             >
                               {systemdDetailLogsBusy ? '读取中...' : '查看日志'}
                             </button>
-                            <button type="button" onClick={onToggleSystemdRealtimeLogs}>
+                            <button type="button" onClick={onToggleSystemdRealtimeLogs} disabled={!canReadSystemdLogs}>
                               {systemdDetailLogsRealtime ? '停止实时日志' : '开启实时日志'}
+                            </button>
+                            <button type="button" onClick={() => setSystemdLogFullscreen(true)} disabled={!canReadSystemdLogs}>
+                              全屏查看
                             </button>
                           </div>
                         </header>
                         {systemdDetailLogs.length > 0 ? (
-                          <pre className="systemd-log">{systemdDetailLogs.join('\n')}</pre>
+                          <pre ref={systemdLogPanelRef} className="systemd-log">{systemdDetailLogs.join('\n')}</pre>
+                        ) : !canReadSystemdLogs ? (
+                          <p className="systemd-service-meta">当前服务已配置为不输出日志。</p>
                         ) : (
                           <p className="systemd-service-meta">
                             {systemdDetailLogsBusy ? '正在读取日志...' : '暂无日志输出，可点击“查看日志”加载。'}
@@ -910,7 +1037,20 @@ export function ServersView({
                       服务名
                     <input
                       value={systemdForm.serviceName}
-                      onChange={(event) => setSystemdForm((prev) => ({ ...prev, serviceName: event.target.value }))}
+                      onChange={(event) => {
+                        const nextServiceName = event.target.value;
+                        setSystemdForm((prev) => {
+                          const prevDefaultPath = defaultSystemdLogOutputPath(prev.serviceName);
+                          const shouldSyncPath = !prev.logOutputPath.trim() || prev.logOutputPath === prevDefaultPath;
+                          return {
+                            ...prev,
+                            serviceName: nextServiceName,
+                            logOutputPath: shouldSyncPath
+                              ? defaultSystemdLogOutputPath(nextServiceName)
+                              : prev.logOutputPath
+                          };
+                        });
+                      }}
                       placeholder="my-app"
                       disabled={systemdBusy}
                       {...textInputProps}
@@ -928,6 +1068,42 @@ export function ServersView({
                         <option value="user">user</option>
                       </select>
                     </label>
+
+                    <label className="field-label">
+                      日志输出
+                      <select
+                        value={systemdForm.logOutputMode}
+                        onChange={(event) => {
+                          const mode = event.target.value as SystemdLogOutputMode;
+                          setSystemdForm((prev) => ({
+                            ...prev,
+                            logOutputMode: mode,
+                            logOutputPath:
+                              mode === 'file'
+                                ? prev.logOutputPath.trim() || defaultSystemdLogOutputPath(prev.serviceName)
+                                : prev.logOutputPath
+                          }));
+                        }}
+                        disabled={systemdBusy}
+                      >
+                        {SYSTEMD_LOG_OUTPUT_MODE_OPTIONS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="field-label">
+                      日志文件路径
+                    <input
+                      value={systemdForm.logOutputPath}
+                      onChange={(event) => setSystemdForm((prev) => ({ ...prev, logOutputPath: event.target.value }))}
+                      placeholder={defaultSystemdLogOutputPath(systemdForm.serviceName)}
+                      disabled={systemdBusy || systemdForm.logOutputMode !== 'file'}
+                      {...textInputProps}
+                    />
+                  </label>
 
                     <label className="field-label systemd-form-span">
                       描述
@@ -967,9 +1143,10 @@ export function ServersView({
                         ))}
                       </div>
                       <input
+                        className="systemd-execstart-input"
                         value={systemdForm.execStart}
                         onChange={(event) => setSystemdForm((prev) => ({ ...prev, execStart: event.target.value }))}
-                        placeholder="/usr/bin/node /opt/my-app/server.js"
+                        placeholder={firstExecStartExample(systemdForm.serviceType) || '/usr/bin/node /opt/my-app/server.js'}
                         disabled={systemdBusy}
                         {...textInputProps}
                       />
@@ -1046,6 +1223,72 @@ export function ServersView({
           <div className="empty-state">设置内容将在这里展示。</div>
         )}
       </section>
+
+      {systemdLogFullscreen && selectedSystemdDetailService && (
+        <div className="systemd-log-fullscreen-overlay" role="dialog" aria-modal="true" aria-label="全屏查看日志">
+          <div className="systemd-log-fullscreen-modal">
+            <div className="systemd-log-fullscreen-header">
+              <div>
+                <h3>{selectedSystemdDetailService.service_name}.service</h3>
+                <p>按 Esc 可退出全屏</p>
+              </div>
+              <div className="card-actions">
+                <button
+                  type="button"
+                  onClick={() => void loadSystemdDetailLogs(selectedSystemdDetailService.id, false)}
+                  disabled={systemdDetailLogsBusy || !canReadSystemdLogs}
+                >
+                  {systemdDetailLogsBusy ? '读取中...' : '查看日志'}
+                </button>
+                <button type="button" onClick={onToggleSystemdRealtimeLogs} disabled={!canReadSystemdLogs}>
+                  {systemdDetailLogsRealtime ? '停止实时日志' : '开启实时日志'}
+                </button>
+                <button type="button" onClick={() => setSystemdLogFullscreen(false)}>
+                  关闭全屏
+                </button>
+              </div>
+            </div>
+
+            {systemdDetailLogs.length > 0 ? (
+              <pre ref={systemdLogFullscreenRef} className="systemd-log systemd-log-fullscreen">
+                {systemdDetailLogs.join('\n')}
+              </pre>
+            ) : !canReadSystemdLogs ? (
+              <p className="systemd-service-meta systemd-log-fullscreen-empty">当前服务已配置为不输出日志。</p>
+            ) : (
+              <p className="systemd-service-meta systemd-log-fullscreen-empty">
+                {systemdDetailLogsBusy ? '正在读取日志...' : '暂无日志输出，可点击“查看日志”加载。'}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {systemdDeleteDialog && (
+        <div className="systemd-confirm-overlay" role="dialog" aria-modal="true" aria-label="确认删除部署服务">
+          <div className="systemd-confirm-modal">
+            <h3>确认删除</h3>
+            <p>将删除部署服务“{systemdDeleteDialog.name}”，并尝试卸载远端 systemd unit。该操作不可撤销。</p>
+            <div className="card-actions systemd-confirm-actions">
+              <button
+                type="button"
+                onClick={() => setSystemdDeleteDialog(null)}
+                disabled={isDeleteConfirmBusy}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => void onConfirmDeleteSystemd()}
+                disabled={isDeleteConfirmBusy}
+              >
+                {isDeleteConfirmBusy ? '删除中...' : '确认删除'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

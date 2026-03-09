@@ -218,6 +218,7 @@ export type DeleteConnectionProfileRequest = {
 };
 
 export type SystemdScope = 'system' | 'user';
+export type SystemdLogOutputMode = 'journal' | 'file' | 'none';
 
 export type DeploySystemdServiceRequest = {
   profile_id: string;
@@ -231,6 +232,8 @@ export type DeploySystemdServiceRequest = {
   enable_on_boot?: boolean;
   scope?: SystemdScope;
   use_sudo?: boolean;
+  log_output_mode?: SystemdLogOutputMode;
+  log_output_path?: string;
 };
 
 export type DeploySystemdServiceResult = {
@@ -257,6 +260,8 @@ export type SystemdDeployService = {
   enable_on_boot: boolean;
   scope: SystemdScope;
   use_sudo: boolean;
+  log_output_mode: SystemdLogOutputMode;
+  log_output_path?: string;
   created_at: number;
   updated_at: number;
 };
@@ -275,6 +280,8 @@ export type UpsertSystemdDeployServiceRequest = {
   enable_on_boot?: boolean;
   scope?: SystemdScope;
   use_sudo?: boolean;
+  log_output_mode?: SystemdLogOutputMode;
+  log_output_path?: string;
 };
 
 export type DeleteSystemdDeployServiceRequest = {

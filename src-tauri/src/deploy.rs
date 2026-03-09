@@ -22,6 +22,18 @@ pub enum SystemdScope {
     User,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemdLogOutputMode {
+    Journal,
+    File,
+    None,
+}
+
+fn default_log_output_mode() -> SystemdLogOutputMode {
+    SystemdLogOutputMode::Journal
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SystemdDeployService {
     pub id: String,
@@ -37,6 +49,10 @@ pub struct SystemdDeployService {
     pub enable_on_boot: bool,
     pub scope: SystemdScope,
     pub use_sudo: bool,
+    #[serde(default = "default_log_output_mode")]
+    pub log_output_mode: SystemdLogOutputMode,
+    #[serde(default)]
+    pub log_output_path: Option<String>,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -56,6 +72,8 @@ pub struct UpsertSystemdDeployServiceRequest {
     pub enable_on_boot: Option<bool>,
     pub scope: Option<SystemdScope>,
     pub use_sudo: Option<bool>,
+    pub log_output_mode: Option<SystemdLogOutputMode>,
+    pub log_output_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,6 +150,8 @@ pub struct DeploySystemdServiceRequest {
     pub enable_on_boot: Option<bool>,
     pub scope: Option<SystemdScope>,
     pub use_sudo: Option<bool>,
+    pub log_output_mode: Option<SystemdLogOutputMode>,
+    pub log_output_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -174,11 +194,15 @@ pub fn upsert_systemd_deploy_service(
         request.description.as_deref(),
         request.service_user.as_deref(),
         request.environment.as_ref(),
+        request.log_output_mode,
+        request.log_output_path.as_deref(),
     )?;
 
     let mut services = load_systemd_services(app)?;
     let now = now_unix();
     let normalized_service_name = normalize_service_name(&request.service_name)?;
+    let (log_output_mode, log_output_path) =
+        normalize_log_output(request.log_output_mode, request.log_output_path)?;
 
     let updated = if let Some(id) = request.id {
         if let Some(existing) = services.iter_mut().find(|service| service.id == id) {
@@ -194,6 +218,8 @@ pub fn upsert_systemd_deploy_service(
             existing.enable_on_boot = request.enable_on_boot.unwrap_or(true);
             existing.scope = request.scope.unwrap_or(SystemdScope::System);
             existing.use_sudo = request.use_sudo.unwrap_or(true);
+            existing.log_output_mode = log_output_mode;
+            existing.log_output_path = log_output_path.clone();
             existing.updated_at = now;
             existing.clone()
         } else {
@@ -214,6 +240,8 @@ pub fn upsert_systemd_deploy_service(
             enable_on_boot: request.enable_on_boot.unwrap_or(true),
             scope: request.scope.unwrap_or(SystemdScope::System),
             use_sudo: request.use_sudo.unwrap_or(true),
+            log_output_mode,
+            log_output_path,
             created_at: now,
             updated_at: now,
         };
@@ -230,11 +258,38 @@ pub fn delete_systemd_deploy_service(
     request: DeleteSystemdDeployServiceRequest,
 ) -> Result<(), String> {
     let mut services = load_systemd_services(app)?;
-    let before = services.len();
+    let removed = services
+        .iter()
+        .find(|service| service.id == request.id)
+        .cloned()
+        .ok_or_else(|| format!("systemd deploy service {} not found", request.id))?;
+
+    let profile = find_profile(app, &removed.profile_id)?;
+    let service_file = service_file_name(&removed.service_name);
+    let remove_script = build_remove_script(&service_file, removed.scope, removed.use_sudo);
+
+    with_pooled_session(&profile, |session| {
+        let (stdout, stderr, exit_status) = run_remote_script(session, &remove_script)?;
+        if exit_status != 0 {
+            let detail = if stderr.trim().is_empty() {
+                stdout.trim()
+            } else {
+                stderr.trim()
+            };
+            return Err(format!(
+                "failed to remove {} (exit code {exit_status}): {}",
+                service_file,
+                if detail.is_empty() {
+                    "unknown error"
+                } else {
+                    detail
+                }
+            ));
+        }
+        Ok(())
+    })?;
+
     services.retain(|service| service.id != request.id);
-    if services.len() == before {
-        return Err(format!("systemd deploy service {} not found", request.id));
-    }
     save_systemd_services(app, &services)
 }
 
@@ -252,9 +307,13 @@ pub fn deploy_systemd_service(
         request.description.as_deref(),
         request.service_user.as_deref(),
         request.environment.as_ref(),
+        request.log_output_mode,
+        request.log_output_path.as_deref(),
     )?;
 
     let normalized_service_name = normalize_service_name(&request.service_name)?;
+    let (log_output_mode, log_output_path) =
+        normalize_log_output(request.log_output_mode, request.log_output_path)?;
     deploy_with_profile(
         app,
         &request.profile_id,
@@ -268,6 +327,8 @@ pub fn deploy_systemd_service(
         request.enable_on_boot.unwrap_or(true),
         request.scope.unwrap_or(SystemdScope::System),
         request.use_sudo.unwrap_or(true),
+        log_output_mode,
+        log_output_path.as_deref(),
     )
 }
 
@@ -293,6 +354,8 @@ pub fn apply_systemd_deploy_service(
         service.enable_on_boot,
         service.scope,
         service.use_sudo,
+        service.log_output_mode,
+        service.log_output_path.as_deref(),
     )
 }
 
@@ -373,16 +436,40 @@ pub fn get_systemd_deploy_service_logs(
         .find(|item| item.id == request.id)
         .ok_or_else(|| format!("systemd deploy service {} not found", request.id))?;
 
+    if matches!(service.log_output_mode, SystemdLogOutputMode::None) {
+        return Ok(SystemdServiceLogsResult {
+            lines: Vec::new(),
+            cursor: None,
+        });
+    }
+
     let profile = find_profile(app, &service.profile_id)?;
     with_pooled_session(&profile, |session| {
-        query_service_logs(
-            session,
-            &service.service_name,
-            service.scope,
-            service.use_sudo,
-            request.lines,
-            request.cursor.as_deref(),
-        )
+        match service.log_output_mode {
+            SystemdLogOutputMode::Journal => query_service_logs(
+                session,
+                &service.service_name,
+                service.scope,
+                service.use_sudo,
+                request.lines,
+                request.cursor.as_deref(),
+            ),
+            SystemdLogOutputMode::File => query_service_file_logs(
+                session,
+                service
+                    .log_output_path
+                    .as_deref()
+                    .ok_or_else(|| "log_output_path is required when log_output_mode is file".to_string())?,
+                service.scope,
+                service.use_sudo,
+                request.lines,
+                request.cursor.as_deref(),
+            ),
+            SystemdLogOutputMode::None => Ok(SystemdServiceLogsResult {
+                lines: Vec::new(),
+                cursor: None,
+            }),
+        }
     })
 }
 
@@ -408,6 +495,8 @@ fn deploy_with_profile(
     enable_on_boot: bool,
     scope: SystemdScope,
     use_sudo: bool,
+    log_output_mode: SystemdLogOutputMode,
+    log_output_path: Option<&str>,
 ) -> Result<DeploySystemdServiceResult, String> {
     let profile = find_profile(app, profile_id)?;
     let normalized_service_name = normalize_service_name(service_name)?;
@@ -420,6 +509,8 @@ fn deploy_with_profile(
         service_user,
         environment,
         scope,
+        log_output_mode,
+        log_output_path,
     )?;
     let unit_path = unit_path(scope, &service_file);
 
@@ -561,6 +652,84 @@ fn query_service_logs(
     Ok(parse_journalctl_output(&stdout, cursor))
 }
 
+fn query_service_file_logs(
+    session: &mut Session,
+    log_path: &str,
+    scope: SystemdScope,
+    use_sudo: bool,
+    lines: Option<u32>,
+    cursor: Option<&str>,
+) -> Result<SystemdServiceLogsResult, String> {
+    let line_limit = lines.unwrap_or(200).clamp(20, 1000);
+    let tail_prefix = match scope {
+        SystemdScope::System if use_sudo => "sudo",
+        _ => "",
+    };
+    let cursor_offset = cursor
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<u64>().ok());
+    let cursor_number = cursor_offset
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-1".to_string());
+
+    let tail_command = if tail_prefix.is_empty() {
+        "tail".to_string()
+    } else {
+        format!("{tail_prefix} tail")
+    };
+    let wc_command = if tail_prefix.is_empty() {
+        "wc -c".to_string()
+    } else {
+        format!("{tail_prefix} wc -c")
+    };
+    let script = format!(
+        r#"set -euo pipefail
+log_path={log_path}
+line_limit={line_limit}
+cursor_offset={cursor_offset}
+size=$({wc_command} < "$log_path" 2>/dev/null | tr -d '[:space:]' || true)
+if [ -z "$size" ]; then
+  size=0
+fi
+if [ "$size" -eq 0 ]; then
+  echo "-- cursor: 0"
+  exit 0
+fi
+if [ "$cursor_offset" -ge 0 ] && [ "$cursor_offset" -lt "$size" ]; then
+  start=$((cursor_offset + 1))
+  {tail_command} -c +"$start" "$log_path" || true
+else
+  {tail_command} -n "$line_limit" "$log_path" || true
+fi
+echo "-- cursor: $size"
+"#,
+        log_path = shell_quote(log_path),
+        line_limit = line_limit,
+        cursor_offset = cursor_number,
+        wc_command = wc_command,
+        tail_command = tail_command
+    );
+    let (stdout, stderr, exit_status) = run_remote_script(session, &script)?;
+    if exit_status != 0 {
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        return Err(format!(
+            "failed to read file logs (exit code {exit_status}): {}",
+            if detail.is_empty() {
+                "unknown error"
+            } else {
+                detail
+            }
+        ));
+    }
+
+    Ok(parse_journalctl_output(&stdout, cursor))
+}
+
 fn parse_journalctl_output(raw: &str, previous_cursor: Option<&str>) -> SystemdServiceLogsResult {
     let mut lines = Vec::new();
     let mut next_cursor = None;
@@ -639,6 +808,8 @@ fn validate_fields(
     description: Option<&str>,
     service_user: Option<&str>,
     environment: Option<&Vec<String>>,
+    log_output_mode: Option<SystemdLogOutputMode>,
+    log_output_path: Option<&str>,
 ) -> Result<(), String> {
     if profile_id.trim().is_empty() {
         return Err("profile_id is required".to_string());
@@ -681,6 +852,11 @@ fn validate_fields(
             }
         }
     }
+
+    validate_log_output(
+        log_output_mode.unwrap_or_else(default_log_output_mode),
+        log_output_path,
+    )?;
 
     Ok(())
 }
@@ -732,6 +908,31 @@ fn sanitize_environment(value: Option<Vec<String>>) -> Option<Vec<String>> {
     })
 }
 
+fn normalize_log_output(
+    mode: Option<SystemdLogOutputMode>,
+    path: Option<String>,
+) -> Result<(SystemdLogOutputMode, Option<String>), String> {
+    let normalized_mode = mode.unwrap_or_else(default_log_output_mode);
+    let normalized_path = sanitize_optional(path);
+    validate_log_output(normalized_mode, normalized_path.as_deref())?;
+    if matches!(normalized_mode, SystemdLogOutputMode::File) {
+        Ok((normalized_mode, normalized_path))
+    } else {
+        Ok((normalized_mode, None))
+    }
+}
+
+fn validate_log_output(mode: SystemdLogOutputMode, path: Option<&str>) -> Result<(), String> {
+    if matches!(mode, SystemdLogOutputMode::File) {
+        let value = path
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .ok_or_else(|| "log_output_path is required when log_output_mode is file".to_string())?;
+        assert_no_newline(value, "log_output_path")?;
+    }
+    Ok(())
+}
+
 fn service_file_name(service_name: &str) -> String {
     format!(
         "{}.service",
@@ -770,6 +971,8 @@ fn build_unit_content(
     service_user: Option<&str>,
     environment: Option<&Vec<String>>,
     scope: SystemdScope,
+    log_output_mode: SystemdLogOutputMode,
+    log_output_path: Option<&str>,
 ) -> Result<String, String> {
     let text = description
         .map(|item| item.trim())
@@ -807,6 +1010,25 @@ fn build_unit_content(
                 "Environment=\"{}\"",
                 escape_systemd_quoted(item.trim())
             ));
+        }
+    }
+
+    match log_output_mode {
+        SystemdLogOutputMode::Journal => {
+            lines.push("StandardOutput=journal".to_string());
+            lines.push("StandardError=journal".to_string());
+        }
+        SystemdLogOutputMode::File => {
+            let path = log_output_path
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .ok_or_else(|| "log_output_path is required when log_output_mode is file".to_string())?;
+            lines.push(format!("StandardOutput=append:{path}"));
+            lines.push(format!("StandardError=append:{path}"));
+        }
+        SystemdLogOutputMode::None => {
+            lines.push("StandardOutput=null".to_string());
+            lines.push("StandardError=null".to_string());
         }
     }
 
@@ -875,6 +1097,37 @@ rm -f "$tmp_unit"
 {prefix} restart {service_file}
 {prefix} --no-pager --full status {service_file} | sed -n '1,40p'
 "#
+    )
+}
+
+fn build_remove_script(service_file: &str, scope: SystemdScope, use_sudo: bool) -> String {
+    let prefix = systemctl_prefix(scope, use_sudo);
+    let unit_path = unit_path(scope, service_file);
+    let remove_cmd = match scope {
+        SystemdScope::System => {
+            if use_sudo {
+                "sudo rm -f \"$unit_path\"".to_string()
+            } else {
+                "rm -f \"$unit_path\"".to_string()
+            }
+        }
+        SystemdScope::User => "rm -f \"$unit_path\"".to_string(),
+    };
+
+    format!(
+        r#"set -euo pipefail
+service_file={service_file_quoted}
+unit_path="{unit_path}"
+{prefix} stop "$service_file" >/dev/null 2>&1 || true
+{prefix} disable "$service_file" >/dev/null 2>&1 || true
+{remove_cmd}
+{prefix} daemon-reload >/dev/null 2>&1 || true
+{prefix} reset-failed "$service_file" >/dev/null 2>&1 || true
+"#,
+        service_file_quoted = shell_quote(service_file),
+        unit_path = unit_path,
+        prefix = prefix,
+        remove_cmd = remove_cmd
     )
 }
 

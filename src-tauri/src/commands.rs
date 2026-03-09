@@ -223,11 +223,16 @@ pub fn upsert_systemd_deploy_service(
 }
 
 #[tauri::command]
-pub fn delete_systemd_deploy_service(
+pub async fn delete_systemd_deploy_service(
     app: AppHandle,
     request: DeleteSystemdDeployServiceRequest,
 ) -> Result<(), String> {
-    delete_systemd_deploy_service_impl(&app, request)
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_systemd_deploy_service_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join delete systemd deploy task: {err}"))?
 }
 
 #[tauri::command]

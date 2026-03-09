@@ -1071,6 +1071,10 @@ button.danger {
   color: #ecf2ff;
 }
 
+.systemd-execstart-input {
+  margin: 4px 0;
+}
+
 .systemd-example-box {
   margin-top: 4px;
   border: 1px dashed #4a5f86;
@@ -1132,13 +1136,105 @@ button.danger {
   font-size: 0.78rem;
   line-height: 1.4;
   padding: 10px;
-  max-height: 280px;
+  min-height: 320px;
+  max-height: 460px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .systemd-log-actions {
+  justify-content: flex-end;
+}
+
+.systemd-log-fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 125;
+  background: rgb(7 11 19 / 76%);
+  padding: 14px;
+}
+
+.systemd-log-fullscreen-modal {
+  width: 100%;
+  height: 100%;
+  border: 1px solid #4f6389;
+  border-radius: 12px;
+  background: #111a2d;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
+
+.systemd-log-fullscreen-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #344a71;
+  background: #1a2744;
+}
+
+.systemd-log-fullscreen-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.systemd-log-fullscreen-header p {
+  margin: 3px 0 0;
+  font-size: 0.78rem;
+  color: #9cb0d6;
+}
+
+.systemd-log.systemd-log-fullscreen {
+  min-height: 0;
+  max-height: none;
+  height: 100%;
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.systemd-log-fullscreen-empty {
+  margin: 10px;
+}
+
+.systemd-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  background: rgb(8 12 22 / 58%);
+  padding: 16px;
+}
+
+.systemd-confirm-modal {
+  width: min(460px, 100%);
+  border: 1px solid #51648b;
+  border-radius: 12px;
+  background: #1a253f;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.systemd-confirm-modal h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.systemd-confirm-modal p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.systemd-confirm-actions {
   justify-content: flex-end;
 }
 
