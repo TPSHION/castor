@@ -1,6 +1,4 @@
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { LocalActionDialog } from './components/LocalActionDialog';
 import { LocalContextMenu } from './components/LocalContextMenu';
@@ -13,22 +11,13 @@ import { SftpContextMenu } from './components/SftpContextMenu';
 import { SftpView } from './components/SftpView';
 import { WorkspaceView } from './components/WorkspaceView';
 import type {
-  AuthConfig,
   LocalFsEntry,
-  SftpDownloadRequest,
-  SftpDownloadResult,
-  SftpEntry,
-  SftpUploadRequest,
-  SftpUploadResult,
-  SftpTransferProgressPayload,
-  SftpUploadConflictStrategy
+  SftpEntry
 } from './types';
-import type { ContentView, LocalUploadConflictDialogState, ConnectionProfile } from './app/types';
+import type { ContentView, ConnectionProfile } from './app/types';
 import {
-  buildAuthFromProfile,
   defaultPermissionInput,
   formatBytes,
-  formatInvokeError,
   formatPermissionMode,
   formatUnixTime
 } from './app/helpers';
@@ -38,7 +27,7 @@ import { useScrollbarWidthVariable } from './app/hooks/useScrollbarWidthVariable
 import { useLocalFilePane } from './app/hooks/useLocalFilePane';
 import { useSessionManager } from './app/hooks/useSessionManager';
 import { useSftpPane } from './app/hooks/useSftpPane';
-import { useSystemDropUploadQueue } from './app/hooks/useSystemDropUploadQueue';
+import { useTransferOrchestrator } from './app/hooks/useTransferOrchestrator';
 import { useTransferProgressManager } from './app/hooks/useTransferProgressManager';
 import { useWindowTitlebarOverlay } from './app/hooks/useWindowTitlebarOverlay';
 
@@ -98,9 +87,6 @@ export function App() {
     openLocalContextMenuAt: openLocalContextMenuAtCore,
     submitLocalActionDialog
   } = useLocalFilePane();
-  const [localUploadConflictDialog, setLocalUploadConflictDialog] = useState<LocalUploadConflictDialogState>(null);
-  const [localUploadConflictRenameValue, setLocalUploadConflictRenameValue] = useState('');
-  const [localUploadConflictError, setLocalUploadConflictError] = useState<string | null>(null);
   const localTransferProgresses = localTransferManager.progresses;
   const localCompletedTransferProgresses = localTransferManager.completed;
   const localContextMenuRef = useRef<HTMLDivElement>(null);
@@ -163,82 +149,60 @@ export function App() {
     onProfileMessage: setProfileMessage
   });
 
+  const {
+    localUploadConflictDialog,
+    localUploadConflictRenameValue,
+    setLocalUploadConflictRenameValue,
+    localUploadConflictError,
+    setLocalUploadConflictError,
+    clearLocalUploadConflictState,
+    closeLocalUploadConflictDialog,
+    onUploadSystemPathsToRemote,
+    onLocalCopyToTarget,
+    onSubmitLocalUploadConflict,
+    onSubmitLocalUploadManualRename,
+    onSftpDownload,
+    onSftpCopyToTarget,
+    onCancelSftpDownload,
+    onCancelLocalUpload,
+    resetSystemDropQueue,
+    resetTransferOrchestratorState
+  } = useTransferOrchestrator({
+    connectedSftpProfile,
+    sftpEntries,
+    sftpPath,
+    loadSftpDir,
+    localPath,
+    loadLocalDir,
+    localBusy,
+    closeLocalContextMenu,
+    closeSftpContextMenu,
+    setLocalMessage,
+    setLocalSelectedPath,
+    setSftpMessage,
+    setSftpSelectedPath,
+    localTransferManager,
+    sftpTransferManager
+  });
+
   useScrollbarWidthVariable('--sftp-body-scrollbar-width');
   useWindowTitlebarOverlay();
   useContextMenuDismiss(Boolean(localContextMenu), localContextMenuRef, closeLocalContextMenu);
   useContextMenuDismiss(Boolean(sftpContextMenu), sftpContextMenuRef, closeSftpContextMenu);
 
-  function createTransferId() {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-      return crypto.randomUUID();
-    }
-    return `transfer-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  }
-
-  function suggestRemoteName(baseName: string) {
-    const nameExists = (value: string) => sftpEntries.some((entry) => entry.name === value);
-    if (!nameExists(baseName)) {
-      return baseName;
-    }
-
-    const dotIndex = baseName.lastIndexOf('.');
-    const hasExtension = dotIndex > 0;
-    const stem = hasExtension ? baseName.slice(0, dotIndex) : baseName;
-    const ext = hasExtension ? baseName.slice(dotIndex) : '';
-
-    let index = 1;
-    while (true) {
-      const nextName = `${stem}-${index}${ext}`;
-      if (!nameExists(nextName)) {
-        return nextName;
-      }
-      index += 1;
-    }
-  }
-
-  function localNameFromPath(path: string) {
-    const trimmed = path.trim();
-    if (!trimmed) {
-      return '';
-    }
-    const normalized = trimmed.replace(/[\\/]+$/, '');
-    if (!normalized) {
-      return trimmed;
-    }
-    const parts = normalized.split(/[\\/]/).filter(Boolean);
-    return parts[parts.length - 1] ?? normalized;
-  }
-
-  const systemDropUploadQueue = useSystemDropUploadQueue({
-    connectedSftpProfile,
-    sftpEntries,
-    sftpPath,
-    localUploadConflictDialog,
-    setLocalMessage,
-    setLocalUploadConflictRenameValue,
-    setLocalUploadConflictError,
-    setLocalUploadConflictDialog,
-    onClearLocalContextMenu: closeLocalContextMenu,
-    suggestRemoteName,
-    localNameFromPath,
-    uploadSystemPathToTarget
-  });
-
   const onSelectSftpProfile = useCallback(
     (profileId: string) => {
       onSelectSftpProfileCore(profileId, {
-        onSwitchedConnectedProfile: systemDropUploadQueue.resetSystemQueue
+        onSwitchedConnectedProfile: resetSystemDropQueue
       });
     },
-    [onSelectSftpProfileCore, systemDropUploadQueue.resetSystemQueue]
+    [onSelectSftpProfileCore, resetSystemDropQueue]
   );
 
   function openLocalContextMenuAt(x: number, y: number, entry: LocalFsEntry | null) {
     setSftpContextMenu(null);
     setLocalActionDialog(null);
-    setLocalUploadConflictDialog(null);
-    setLocalUploadConflictRenameValue('');
-    setLocalUploadConflictError(null);
+    clearLocalUploadConflictState();
     setLocalActionError(null);
     openLocalContextMenuAtCore(x, y, entry);
   }
@@ -260,12 +224,7 @@ export function App() {
       setSftpContextMenu(null);
       setSftpActionDialog(null);
       setSftpActionError(null);
-      setLocalUploadConflictDialog(null);
-      setLocalUploadConflictRenameValue('');
-      setLocalUploadConflictError(null);
-      systemDropUploadQueue.resetSystemQueue();
-      localTransferManager.reset();
-      sftpTransferManager.reset();
+      resetTransferOrchestratorState();
       return;
     }
 
@@ -280,263 +239,26 @@ export function App() {
       setSftpContextMenu(null);
       setSftpActionDialog(null);
       setSftpActionError(null);
-      setLocalUploadConflictDialog(null);
-      setLocalUploadConflictRenameValue('');
-      setLocalUploadConflictError(null);
-      systemDropUploadQueue.resetSystemQueue();
+      clearLocalUploadConflictState();
+      resetSystemDropQueue();
       sftpTransferManager.reset();
       setSftpMessage('当前远程连接服务器已不存在，请重新选择。');
     }
-  }, [profiles, selectedSftpProfileId, connectedSftpProfileId]);
+  }, [
+    clearLocalUploadConflictState,
+    connectedSftpProfileId,
+    profiles,
+    resetSystemDropQueue,
+    resetTransferOrchestratorState,
+    selectedSftpProfileId,
+    sftpTransferManager.reset
+  ]);
 
   useEffect(() => {
     setLocalContextMenu(null);
     setSftpContextMenu(null);
-    setLocalUploadConflictDialog(null);
-    setLocalUploadConflictRenameValue('');
-    setLocalUploadConflictError(null);
-  }, [contentView]);
-
-  useEffect(() => {
-    let mounted = true;
-
-    const unsubscribePromise = listen<SftpTransferProgressPayload>('sftp-transfer-progress', (event) => {
-      if (!mounted) {
-        return;
-      }
-
-      if (event.payload.direction === 'upload') {
-        localTransferManager.applyProgress(event.payload);
-        return;
-      }
-
-      sftpTransferManager.applyProgress(event.payload);
-    });
-
-    return () => {
-      mounted = false;
-      void unsubscribePromise.then((unlisten) => unlisten());
-    };
-  }, [localTransferManager.applyProgress, sftpTransferManager.applyProgress]);
-
-  function closeLocalUploadConflictDialog() {
-    if (localBusy) {
-      return;
-    }
-    const fromSystemQueue = localUploadConflictDialog?.source === 'system';
-    setLocalUploadConflictDialog(null);
-    setLocalUploadConflictRenameValue('');
-    setLocalUploadConflictError(null);
-    if (fromSystemQueue) {
-      systemDropUploadQueue.continueSystemQueue();
-    }
-  }
-
-  async function uploadLocalToTarget(
-    entry: LocalFsEntry,
-    strategy: SftpUploadConflictStrategy = 'auto_rename',
-    remoteName?: string
-  ) {
-    if (!connectedSftpProfile) {
-      setLocalMessage('请先连接服务器。');
-      return;
-    }
-
-    const auth = buildAuthFromProfile(connectedSftpProfile);
-    if (!auth) {
-      setLocalMessage(`服务器 ${connectedSftpProfile.name} 缺少可用凭据，请先编辑并保存。`);
-      return;
-    }
-
-    setLocalContextMenu(null);
-    setLocalUploadConflictDialog(null);
-    setLocalSelectedPath(entry.path);
-    const transferId = createTransferId();
-    localTransferManager.markStarted(transferId);
-    localTransferManager.applyProgress({
-      transfer_id: transferId,
-      direction: 'upload',
-      status: 'running',
-      path: entry.path,
-      target_path: sftpPath,
-      transferred_bytes: 0,
-      total_bytes: 0,
-      percent: 0
-    });
-    setLocalMessage(`正在上传到目标目录：${entry.path}`);
-
-    const request: SftpUploadRequest = {
-      host: connectedSftpProfile.host,
-      port: connectedSftpProfile.port,
-      username: connectedSftpProfile.username,
-      auth,
-      local_path: entry.path,
-      remote_dir: sftpPath,
-      remote_name: remoteName?.trim() || undefined,
-      conflict_strategy: strategy,
-      transfer_id: transferId
-    };
-
-    try {
-      const result = await invoke<SftpUploadResult>('sftp_upload_path', { request });
-      setLocalMessage(`已上传到目标目录：${result.remote_path}（${formatBytes(result.bytes)}）`);
-      await loadSftpDir(connectedSftpProfile, sftpPath, {
-        silent: true,
-        background: true
-      });
-    } catch (invokeError) {
-      const message = formatInvokeError(invokeError);
-      setLocalMessage(message);
-      if (!message.includes('已取消')) {
-        localTransferManager.applyProgress({
-          transfer_id: transferId,
-          direction: 'upload',
-          status: 'error',
-          path: entry.path,
-          target_path: sftpPath,
-          transferred_bytes: 0,
-          total_bytes: 0,
-          percent: 0
-        });
-      }
-    }
-  }
-
-  async function uploadSystemPathToTarget(localPathValue: string) {
-    if (!connectedSftpProfile) {
-      setLocalMessage('请先连接服务器。');
-      return;
-    }
-
-    const auth = buildAuthFromProfile(connectedSftpProfile);
-    if (!auth) {
-      setLocalMessage(`服务器 ${connectedSftpProfile.name} 缺少可用凭据，请先编辑并保存。`);
-      return;
-    }
-
-    const sourcePath = localPathValue.trim();
-    if (!sourcePath) {
-      return;
-    }
-
-    const transferId = createTransferId();
-    localTransferManager.markStarted(transferId);
-    localTransferManager.applyProgress({
-      transfer_id: transferId,
-      direction: 'upload',
-      status: 'running',
-      path: sourcePath,
-      target_path: sftpPath,
-      transferred_bytes: 0,
-      total_bytes: 0,
-      percent: 0
-    });
-    setLocalMessage(`正在上传到目标目录：${sourcePath}`);
-
-    const remoteName = localNameFromPath(sourcePath);
-    const request: SftpUploadRequest = {
-      host: connectedSftpProfile.host,
-      port: connectedSftpProfile.port,
-      username: connectedSftpProfile.username,
-      auth,
-      local_path: sourcePath,
-      remote_dir: sftpPath,
-      remote_name: remoteName || undefined,
-      conflict_strategy: 'auto_rename',
-      transfer_id: transferId
-    };
-
-    try {
-      const result = await invoke<SftpUploadResult>('sftp_upload_path', { request });
-      setLocalMessage(`已上传到目标目录：${result.remote_path}（${formatBytes(result.bytes)}）`);
-      await loadSftpDir(connectedSftpProfile, sftpPath, {
-        silent: true,
-        background: true
-      });
-    } catch (invokeError) {
-      const message = formatInvokeError(invokeError);
-      setLocalMessage(message);
-      if (!message.includes('已取消')) {
-        localTransferManager.applyProgress({
-          transfer_id: transferId,
-          direction: 'upload',
-          status: 'error',
-          path: sourcePath,
-          target_path: sftpPath,
-          transferred_bytes: 0,
-          total_bytes: 0,
-          percent: 0
-        });
-      }
-    }
-  }
-
-  function onUploadSystemPathsToRemote(paths: string[]) {
-    systemDropUploadQueue.enqueueSystemPaths(paths);
-  }
-
-  async function onLocalCopyToTarget(entry: LocalFsEntry) {
-    if (!connectedSftpProfile) {
-      setLocalMessage('请先连接服务器。');
-      return;
-    }
-
-    const conflict = sftpEntries.find((item) => item.name === entry.name) ?? null;
-    if (conflict) {
-      setLocalContextMenu(null);
-      setLocalUploadConflictRenameValue(suggestRemoteName(entry.name));
-      setLocalUploadConflictError(null);
-      setLocalUploadConflictDialog({
-        localEntry: entry,
-        remoteEntry: conflict,
-        remoteDir: sftpPath,
-        source: 'local'
-      });
-      setLocalMessage('目标目录存在同名项，请选择上传策略。');
-      return;
-    }
-
-    await uploadLocalToTarget(entry, 'auto_rename');
-  }
-
-  async function onSubmitLocalUploadConflict(strategy: SftpUploadConflictStrategy) {
-    if (!localUploadConflictDialog) {
-      return;
-    }
-    const dialog = localUploadConflictDialog;
-    setLocalUploadConflictError(null);
-    await uploadLocalToTarget(dialog.localEntry, strategy);
-    if (dialog.source === 'system') {
-      systemDropUploadQueue.continueSystemQueue();
-    }
-  }
-
-  async function onSubmitLocalUploadManualRename() {
-    if (!localUploadConflictDialog) {
-      return;
-    }
-    const dialog = localUploadConflictDialog;
-
-    const nextName = localUploadConflictRenameValue.trim();
-    if (!nextName) {
-      setLocalUploadConflictError('请输入新的文件名');
-      return;
-    }
-    if (nextName === '.' || nextName === '..' || nextName.includes('/')) {
-      setLocalUploadConflictError('名称不能为 "."、".."，且不能包含 "/"');
-      return;
-    }
-    if (sftpEntries.some((entry) => entry.name === nextName)) {
-      setLocalUploadConflictError('该名称已存在，请更换，或使用“覆盖上传”');
-      return;
-    }
-
-    setLocalUploadConflictError(null);
-    await uploadLocalToTarget(dialog.localEntry, 'auto_rename', nextName);
-    if (dialog.source === 'system') {
-      systemDropUploadQueue.continueSystemQueue();
-    }
-  }
+    clearLocalUploadConflictState();
+  }, [clearLocalUploadConflictState, contentView]);
 
   async function openSftpView() {
     setContentView('sftp');
@@ -555,175 +277,11 @@ export function App() {
     }
   }
 
-  async function onSftpDownload(entry: SftpEntry) {
-    if (!connectedSftpProfile || entry.is_dir) {
-      return;
-    }
-
-    const auth = buildAuthFromProfile(connectedSftpProfile);
-    if (!auth) {
-      setSftpMessage(`服务器 ${connectedSftpProfile.name} 缺少可用凭据，请先编辑并保存。`);
-      return;
-    }
-
-    const request: SftpDownloadRequest = {
-      host: connectedSftpProfile.host,
-      port: connectedSftpProfile.port,
-      username: connectedSftpProfile.username,
-      auth,
-      remote_path: entry.path
-    };
-
-    const transferId = createTransferId();
-    request.transfer_id = transferId;
-    sftpTransferManager.markStarted(transferId);
-    sftpTransferManager.applyProgress({
-      transfer_id: transferId,
-      direction: 'download',
-      status: 'running',
-      path: entry.path,
-      target_path: localPath || '',
-      transferred_bytes: 0,
-      total_bytes: 0,
-      percent: 0
-    });
-    setSftpMessage(`正在下载：${entry.path}`);
-
-    try {
-      const result = await invoke<SftpDownloadResult>('sftp_download_file', { request });
-      setSftpMessage(`下载完成：${result.local_path}（${formatBytes(result.bytes)}）`);
-    } catch (invokeError) {
-      const message = formatInvokeError(invokeError);
-      setSftpMessage(message);
-      if (!message.includes('已取消')) {
-        sftpTransferManager.applyProgress({
-          transfer_id: transferId,
-          direction: 'download',
-          status: 'error',
-          path: entry.path,
-          target_path: localPath || '',
-          transferred_bytes: 0,
-          total_bytes: 0,
-          percent: 0
-        });
-      }
-    }
-  }
-
-  function getConnectedSftpContext(): { profile: ConnectionProfile; auth: AuthConfig } | null {
-    if (!connectedSftpProfile) {
-      setSftpMessage('请先连接服务器。');
-      return null;
-    }
-
-    const auth = buildAuthFromProfile(connectedSftpProfile);
-    if (!auth) {
-      setSftpMessage(`服务器 ${connectedSftpProfile.name} 缺少可用凭据，请先编辑并保存。`);
-      return null;
-    }
-
-    return {
-      profile: connectedSftpProfile,
-      auth
-    };
-  }
-
-  async function onSftpCopyToTarget(entry: SftpEntry) {
-    const context = getConnectedSftpContext();
-    if (!context) {
-      return;
-    }
-
-    setSftpContextMenu(null);
-    setSftpSelectedPath(entry.path);
-    const transferId = createTransferId();
-    sftpTransferManager.markStarted(transferId);
-    sftpTransferManager.applyProgress({
-      transfer_id: transferId,
-      direction: 'download',
-      status: 'running',
-      path: entry.path,
-      target_path: localPath || '',
-      transferred_bytes: 0,
-      total_bytes: 0,
-      percent: 0
-    });
-    setSftpMessage(`正在下载到目标目录：${entry.path}`);
-
-    const request: SftpDownloadRequest = {
-      host: context.profile.host,
-      port: context.profile.port,
-      username: context.profile.username,
-      auth: context.auth,
-      remote_path: entry.path,
-      local_dir: localPath || undefined
-    };
-    request.transfer_id = transferId;
-
-    try {
-      const result = await invoke<SftpDownloadResult>('sftp_download_file', { request });
-      setSftpMessage(`已下载到目标目录：${result.local_path}（${formatBytes(result.bytes)}）`);
-      if (localPath) {
-        void loadLocalDir(localPath, {
-          silent: true,
-          background: true
-        });
-      }
-    } catch (invokeError) {
-      const message = formatInvokeError(invokeError);
-      setSftpMessage(message);
-      if (!message.includes('已取消')) {
-        sftpTransferManager.applyProgress({
-          transfer_id: transferId,
-          direction: 'download',
-          status: 'error',
-          path: entry.path,
-          target_path: localPath || '',
-          transferred_bytes: 0,
-          total_bytes: 0,
-          percent: 0
-        });
-      }
-    }
-  }
-
-  async function onCancelSftpDownload(transferId: string) {
-    setSftpMessage('正在取消下载...');
-    try {
-      await invoke('cancel_sftp_transfer', {
-        request: {
-          transfer_id: transferId
-        }
-      });
-    } catch (invokeError) {
-      const message = formatInvokeError(invokeError);
-      if (!message.includes('不存在') && !message.includes('已结束')) {
-        setSftpMessage(message);
-      }
-    }
-  }
-
-  async function onCancelLocalUpload(transferId: string) {
-    setLocalMessage('正在取消上传...');
-    try {
-      await invoke('cancel_sftp_transfer', {
-        request: {
-          transfer_id: transferId
-        }
-      });
-    } catch (invokeError) {
-      const message = formatInvokeError(invokeError);
-      if (!message.includes('不存在') && !message.includes('已结束')) {
-        setLocalMessage(message);
-      }
-    }
-  }
-
   function onDisconnectSftpHost() {
     if (!connectedSftpProfile) {
       return;
     }
-    systemDropUploadQueue.resetSystemQueue();
+    resetSystemDropQueue();
     const name = connectedSftpProfile.name;
     setConnectedSftpProfileId('');
     setSftpEntries([]);
@@ -733,6 +291,7 @@ export function App() {
     setSftpContextMenu(null);
     setSftpActionDialog(null);
     setSftpActionError(null);
+    clearLocalUploadConflictState();
     sftpTransferManager.reset();
     setSftpMessage(`已关闭与 ${name} 的 SFTP 连接`);
   }
