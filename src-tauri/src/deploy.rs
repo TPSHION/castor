@@ -198,11 +198,19 @@ pub fn upsert_systemd_deploy_service(
         request.log_output_path.as_deref(),
     )?;
 
+    let _services_lock = systemd_services_store_lock()
+        .lock()
+        .map_err(|_| "systemd services store lock poisoned".to_string())?;
     let mut services = load_systemd_services(app)?;
     let now = now_unix();
     let normalized_service_name = normalize_service_name(&request.service_name)?;
     let (log_output_mode, log_output_path) =
         normalize_log_output(request.log_output_mode, request.log_output_path)?;
+    ensure_unique_service_name(
+        &services,
+        &normalized_service_name,
+        request.id.as_deref(),
+    )?;
 
     let updated = if let Some(id) = request.id {
         if let Some(existing) = services.iter_mut().find(|service| service.id == id) {
@@ -257,12 +265,17 @@ pub fn delete_systemd_deploy_service(
     app: &AppHandle,
     request: DeleteSystemdDeployServiceRequest,
 ) -> Result<(), String> {
-    let mut services = load_systemd_services(app)?;
-    let removed = services
-        .iter()
-        .find(|service| service.id == request.id)
-        .cloned()
-        .ok_or_else(|| format!("systemd deploy service {} not found", request.id))?;
+    let removed = {
+        let _services_lock = systemd_services_store_lock()
+            .lock()
+            .map_err(|_| "systemd services store lock poisoned".to_string())?;
+        let services = load_systemd_services(app)?;
+        services
+            .iter()
+            .find(|service| service.id == request.id)
+            .cloned()
+            .ok_or_else(|| format!("systemd deploy service {} not found", request.id.clone()))?
+    };
 
     let profile = find_profile(app, &removed.profile_id)?;
     let service_file = service_file_name(&removed.service_name);
@@ -289,7 +302,15 @@ pub fn delete_systemd_deploy_service(
         Ok(())
     })?;
 
+    let _services_lock = systemd_services_store_lock()
+        .lock()
+        .map_err(|_| "systemd services store lock poisoned".to_string())?;
+    let mut services = load_systemd_services(app)?;
+    let previous_len = services.len();
     services.retain(|service| service.id != request.id);
+    if services.len() == previous_len {
+        return Err(format!("systemd deploy service {} not found", request.id));
+    }
     save_systemd_services(app, &services)
 }
 
@@ -1360,4 +1381,29 @@ fn now_unix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
+}
+
+fn systemd_services_store_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn ensure_unique_service_name(
+    services: &[SystemdDeployService],
+    normalized_service_name: &str,
+    current_id: Option<&str>,
+) -> Result<(), String> {
+    let duplicated = services.iter().any(|item| {
+        if current_id.is_some_and(|id| item.id == id) {
+            return false;
+        }
+        item.service_name.eq_ignore_ascii_case(normalized_service_name)
+    });
+    if duplicated {
+        return Err(format!(
+            "service_name already exists: {}",
+            normalized_service_name
+        ));
+    }
+    Ok(())
 }

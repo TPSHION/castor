@@ -878,6 +878,12 @@ button.danger {
   font-size: 0.82rem;
 }
 
+.field-error-text {
+  color: #f6a5af;
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
 .card-actions {
   display: flex;
   gap: 6px;
@@ -986,6 +992,20 @@ button.danger {
 
 .systemd-service-card {
   gap: 6px;
+}
+
+.systemd-service-card.clickable {
+  cursor: pointer;
+}
+
+.systemd-service-card.clickable:hover {
+  border-color: #5d77a8;
+  background: #1f2b43;
+}
+
+.systemd-service-card.clickable:focus-visible {
+  outline: 2px solid #5f93dd;
+  outline-offset: 1px;
 }
 
 .systemd-detail-grid {

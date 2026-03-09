@@ -150,6 +150,10 @@ function defaultSystemdLogOutputPath(serviceName: string): string {
   return `/var/log/${safeName}.log`;
 }
 
+function normalizeComparableServiceName(serviceName: string): string {
+  return serviceName.trim().replace(/\.service$/i, '').toLowerCase();
+}
+
 function systemdLogOutputPathLabel(service: SystemdDeployService): string {
   if (service.log_output_mode === 'none') {
     return '未启用';
@@ -286,12 +290,14 @@ export function ServersView({
   const [systemdLogFullscreen, setSystemdLogFullscreen] = useState(false);
   const [systemdMessage, setSystemdMessage] = useState<string | null>(null);
   const [systemdMessageIsError, setSystemdMessageIsError] = useState(false);
+  const [systemdSubmitAction, setSystemdSubmitAction] = useState<'save' | 'save-and-deploy' | null>(null);
   const systemdDetailLogsCursorRef = useRef<string | null>(null);
   const systemdDetailLogsRealtimeRef = useRef(false);
   const pendingSystemdLogLinesRef = useRef<string[]>([]);
   const systemdLogFlushTimerRef = useRef<number | null>(null);
   const systemdLogPanelRef = useRef<HTMLPreElement | null>(null);
   const systemdLogFullscreenRef = useRef<HTMLPreElement | null>(null);
+  const systemdSubmitActionRef = useRef<'save' | 'save-and-deploy' | null>(null);
 
   const profileNameMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -313,6 +319,28 @@ export function ServersView({
     () => SYSTEMD_EXECSTART_EXAMPLES[systemdForm.serviceType],
     [systemdForm.serviceType]
   );
+  const systemdDuplicateService = useMemo(() => {
+    const normalizedServiceName = normalizeComparableServiceName(systemdForm.serviceName);
+    if (!normalizedServiceName) {
+      return null;
+    }
+    return (
+      systemdServices.find(
+        (item) =>
+          item.id !== systemdForm.id &&
+          normalizeComparableServiceName(item.service_name) === normalizedServiceName
+      ) ?? null
+    );
+  }, [systemdForm.id, systemdForm.serviceName, systemdServices]);
+  const systemdServiceNameValidationMessage = useMemo(() => {
+    if (!systemdForm.serviceName.trim()) {
+      return null;
+    }
+    if (!systemdDuplicateService) {
+      return null;
+    }
+    return `服务名已存在：${systemdDuplicateService.service_name}，请更换后再保存`;
+  }, [systemdDuplicateService, systemdForm.serviceName]);
   const isSystemdLogFilterDirty = useMemo(() => {
     return (
       systemdLogFilterKeywordDraft.trim() !== systemdLogFilterKeywordApplied.trim() ||
@@ -352,6 +380,7 @@ export function ServersView({
   const canDetailStart = !systemdBusy && !systemdDetailStatusBusy && !systemdDetailAction && !isDetailRunning;
   const canDetailStop = !systemdBusy && !systemdDetailStatusBusy && !systemdDetailAction && isDetailRunning;
   const detailStatusActionDisabled = systemdBusy || systemdDetailStatusBusy || Boolean(systemdDetailAction);
+  const detailBackDisabled = systemdDetailAction === 'delete';
   const canReadSystemdLogs = Boolean(
     selectedSystemdDetailService && selectedSystemdDetailService.log_output_mode !== 'none'
   );
@@ -366,6 +395,9 @@ export function ServersView({
     if (!systemdForm.serviceName.trim()) {
       return '服务名不能为空';
     }
+    if (systemdServiceNameValidationMessage) {
+      return systemdServiceNameValidationMessage;
+    }
     if (!systemdForm.workingDir.trim()) {
       return '工作目录不能为空';
     }
@@ -376,7 +408,7 @@ export function ServersView({
       return '日志输出为文件时，日志路径不能为空';
     }
     return null;
-  }, [systemdForm]);
+  }, [systemdForm, systemdServiceNameValidationMessage]);
 
   useEffect(() => {
     if (profiles.length === 0) {
@@ -704,7 +736,10 @@ export function ServersView({
     });
   };
 
-  const onSubmitSystemdForm = async () => {
+  const onSubmitSystemdForm = async (mode: 'save' | 'save-and-deploy') => {
+    if (systemdSubmitActionRef.current) {
+      return;
+    }
     if (systemdValidation) {
       setSystemdMessage(systemdValidation);
       setSystemdMessageIsError(true);
@@ -744,13 +779,23 @@ export function ServersView({
       log_output_path: systemdForm.logOutputMode === 'file' ? systemdForm.logOutputPath.trim() || undefined : undefined
     };
 
+    systemdSubmitActionRef.current = mode;
+    setSystemdSubmitAction(mode);
     setSystemdBusy(true);
-    setSystemdMessage('正在保存并部署...');
+    setSystemdMessage(mode === 'save' ? '正在保存...' : '正在保存并部署...');
     setSystemdMessageIsError(false);
     try {
       const saved = await upsertSystemdDeployService(request);
-      await applySystemdDeployService({ id: saved.id });
-      setSystemdMessage(`部署成功：${saved.service_name}.service`);
+      if (!request.id) {
+        setSystemdForm((previous) => ({ ...previous, id: saved.id }));
+        setSystemdMode('edit');
+      }
+      if (mode === 'save-and-deploy') {
+        await applySystemdDeployService({ id: saved.id });
+        setSystemdMessage(`部署成功：${saved.service_name}.service`);
+      } else {
+        setSystemdMessage(`已保存部署服务：${saved.service_name}.service`);
+      }
       setSystemdMessageIsError(false);
       setSystemdMode('list');
       await refreshSystemdList();
@@ -759,6 +804,8 @@ export function ServersView({
       setSystemdMessageIsError(true);
     } finally {
       setSystemdBusy(false);
+      systemdSubmitActionRef.current = null;
+      setSystemdSubmitAction(null);
     }
   };
 
@@ -924,7 +971,26 @@ export function ServersView({
                   <div className="systemd-service-grid">
                     {systemdServices.map((service) => {
                       return (
-                        <article key={service.id} className="host-card systemd-service-card">
+                        <article
+                          key={service.id}
+                          className={systemdBusy ? 'host-card systemd-service-card' : 'host-card systemd-service-card clickable'}
+                          role="button"
+                          tabIndex={systemdBusy ? -1 : 0}
+                          onClick={() => {
+                            if (!systemdBusy) {
+                              onOpenSystemdDetail(service);
+                            }
+                          }}
+                          onKeyDown={(event) => {
+                            if (systemdBusy) {
+                              return;
+                            }
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              onOpenSystemdDetail(service);
+                            }
+                          }}
+                        >
                           <header className="host-card-header">
                             <div>
                               <h3>{service.name}</h3>
@@ -939,16 +1005,33 @@ export function ServersView({
                           </p>
 
                           <div className="card-actions">
-                            <button type="button" onClick={() => onOpenSystemdDetail(service)} disabled={systemdBusy}>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onOpenSystemdDetail(service);
+                              }}
+                              disabled={systemdBusy}
+                            >
                               详情
                             </button>
-                            <button type="button" onClick={() => onEditSystemd(service)} disabled={systemdBusy}>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onEditSystemd(service);
+                              }}
+                              disabled={systemdBusy}
+                            >
                               编辑
                             </button>
                             <button
                               type="button"
                               className="danger"
-                              onClick={() => requestDeleteSystemdFromList(service)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                requestDeleteSystemdFromList(service);
+                              }}
                               disabled={systemdBusy}
                             >
                               {systemdDeletingServiceId === service.id ? '删除中...' : '删除'}
@@ -967,7 +1050,7 @@ export function ServersView({
                     type="button"
                     className="systemd-back-icon-btn"
                     onClick={onBackSystemdList}
-                    disabled={detailStatusActionDisabled}
+                    disabled={detailBackDisabled}
                     aria-label="返回列表"
                     title="返回列表"
                   >
@@ -1196,14 +1279,25 @@ export function ServersView({
                   </button>
                   <h2>{systemdMode === 'create' ? '新增部署服务' : '编辑部署服务'}</h2>
                   <div className="section-actions">
-                    <button type="button" onClick={onSubmitSystemdForm} disabled={systemdBusy || Boolean(systemdValidation)}>
-                      {systemdBusy ? '处理中...' : '保存并部署'}
+                    <button
+                      type="button"
+                      onClick={() => void onSubmitSystemdForm('save')}
+                      disabled={systemdBusy || Boolean(systemdValidation)}
+                    >
+                      {systemdSubmitAction === 'save' ? '保存中...' : '仅保存'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void onSubmitSystemdForm('save-and-deploy')}
+                      disabled={systemdBusy || Boolean(systemdValidation)}
+                    >
+                      {systemdSubmitAction === 'save-and-deploy' ? '部署中...' : '保存并部署'}
                     </button>
                   </div>
                 </div>
 
                 <div className="systemd-form-scroll">
-                  <p className="status-line">保存后会自动执行部署（生成/更新 unit + daemon-reload + enable(可选) + restart）。</p>
+                  <p className="status-line">可选择“仅保存”或“保存并部署”（生成/更新 unit + daemon-reload + enable(可选) + restart）。</p>
                   {systemdMessage && (
                     <p className={systemdMessageIsError ? 'status-line error' : 'status-line'}>{systemdMessage}</p>
                   )}
@@ -1263,8 +1357,12 @@ export function ServersView({
                       }}
                       placeholder="my-app"
                       disabled={systemdBusy}
+                      aria-invalid={Boolean(systemdServiceNameValidationMessage)}
                       {...textInputProps}
                     />
+                    {systemdServiceNameValidationMessage && (
+                      <span className="field-error-text">{systemdServiceNameValidationMessage}</span>
+                    )}
                   </label>
 
                     <label className="field-label">
