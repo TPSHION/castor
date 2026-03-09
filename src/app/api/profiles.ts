@@ -6,9 +6,11 @@ import type {
   DeleteSystemdDeployServiceRequest,
   DeploySystemdServiceRequest,
   DeploySystemdServiceResult,
+  GetSystemdDeployServiceLogsRequest,
   GetSystemdDeployServiceStatusRequest,
   SystemdDeployService,
   SystemdServiceActionResult,
+  SystemdServiceLogsResult,
   SystemdServiceStatus,
   UpsertSystemdDeployServiceRequest,
   DeleteConnectionProfileRequest,
@@ -67,6 +69,13 @@ export function applySystemdDeployService(request: ApplySystemdDeployServiceRequ
 export function getSystemdDeployServiceStatus(request: GetSystemdDeployServiceStatusRequest) {
   return invokeTauriWithRequest<SystemdServiceStatus, GetSystemdDeployServiceStatusRequest>(
     'get_systemd_deploy_service_status',
+    request
+  );
+}
+
+export function getSystemdDeployServiceLogs(request: GetSystemdDeployServiceLogsRequest) {
+  return invokeTauriWithRequest<SystemdServiceLogsResult, GetSystemdDeployServiceLogsRequest>(
+    'get_systemd_deploy_service_logs',
     request
   );
 }

@@ -1138,6 +1138,10 @@ button.danger {
   word-break: break-word;
 }
 
+.systemd-log-actions {
+  justify-content: flex-end;
+}
+
 .editor-grid label {
   display: flex;
   flex-direction: column;

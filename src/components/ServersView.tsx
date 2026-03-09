@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   applySystemdDeployService,
+  controlSystemdDeployService,
   deleteSystemdDeployService,
+  getSystemdDeployServiceLogs,
   getSystemdDeployServiceStatus,
   listSystemdDeployServices,
   upsertSystemdDeployService
@@ -48,6 +50,8 @@ type SystemdFormState = {
 type SystemdServiceType = 'node' | 'python' | 'java' | 'go' | 'dotnet' | 'docker' | 'custom';
 
 const SYSTEMD_SERVICE_TYPES: SystemdServiceType[] = ['node', 'python', 'java', 'go', 'dotnet', 'docker', 'custom'];
+const SYSTEMD_LOG_FETCH_LINES = 200;
+const SYSTEMD_LOG_MAX_LINES = 1000;
 
 const SYSTEMD_EXECSTART_EXAMPLES: Record<SystemdServiceType, { label: string; examples: string[] }> = {
   node: {
@@ -171,8 +175,14 @@ export function ServersView({
   const [systemdBusy, setSystemdBusy] = useState(false);
   const [systemdDetailStatusBusy, setSystemdDetailStatusBusy] = useState(false);
   const [systemdDetailStatus, setSystemdDetailStatus] = useState<SystemdServiceStatus | null>(null);
+  const [systemdDetailAction, setSystemdDetailAction] = useState<'start' | 'stop' | 'restart' | 'delete' | null>(null);
+  const [systemdDetailLogsBusy, setSystemdDetailLogsBusy] = useState(false);
+  const [systemdDetailLogsRealtime, setSystemdDetailLogsRealtime] = useState(false);
+  const [systemdDetailLogs, setSystemdDetailLogs] = useState<string[]>([]);
+  const [systemdDetailLogsCursor, setSystemdDetailLogsCursor] = useState<string | null>(null);
   const [systemdMessage, setSystemdMessage] = useState<string | null>(null);
   const [systemdMessageIsError, setSystemdMessageIsError] = useState(false);
+  const systemdDetailLogsCursorRef = useRef<string | null>(null);
 
   const profileNameMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -194,6 +204,10 @@ export function ServersView({
     () => SYSTEMD_EXECSTART_EXAMPLES[systemdForm.serviceType],
     [systemdForm.serviceType]
   );
+  const isDetailRunning = systemdDetailStatus?.summary === 'running';
+  const canDetailStart = !systemdBusy && !systemdDetailStatusBusy && !systemdDetailAction && !isDetailRunning;
+  const canDetailStop = !systemdBusy && !systemdDetailStatusBusy && !systemdDetailAction && isDetailRunning;
+  const detailStatusActionDisabled = systemdBusy || systemdDetailStatusBusy || Boolean(systemdDetailAction);
 
   const systemdValidation = useMemo(() => {
     if (!systemdForm.profileId) {
@@ -232,6 +246,10 @@ export function ServersView({
       };
     });
   }, [profiles]);
+
+  useEffect(() => {
+    systemdDetailLogsCursorRef.current = systemdDetailLogsCursor;
+  }, [systemdDetailLogsCursor]);
 
   const refreshSystemdList = useCallback(async () => {
     setSystemdBusy(true);
@@ -282,20 +300,139 @@ export function ServersView({
     }
   }, []);
 
+  const loadSystemdDetailLogs = useCallback(async (serviceId: string, incremental: boolean, silent = false) => {
+    if (!silent) {
+      setSystemdDetailLogsBusy(true);
+    }
+    try {
+      const result = await getSystemdDeployServiceLogs({
+        id: serviceId,
+        lines: SYSTEMD_LOG_FETCH_LINES,
+        cursor: incremental ? systemdDetailLogsCursorRef.current ?? undefined : undefined
+      });
+      setSystemdDetailLogsCursor(result.cursor ?? null);
+      if (incremental) {
+        if (result.lines.length > 0) {
+          setSystemdDetailLogs((previous) => {
+            const merged = [...previous, ...result.lines];
+            if (merged.length <= SYSTEMD_LOG_MAX_LINES) {
+              return merged;
+            }
+            return merged.slice(merged.length - SYSTEMD_LOG_MAX_LINES);
+          });
+        }
+      } else {
+        const next = result.lines.length <= SYSTEMD_LOG_MAX_LINES
+          ? result.lines
+          : result.lines.slice(result.lines.length - SYSTEMD_LOG_MAX_LINES);
+        setSystemdDetailLogs(next);
+      }
+    } catch (invokeError) {
+      setSystemdMessage(`读取服务日志失败：${formatInvokeError(invokeError)}`);
+      setSystemdMessageIsError(true);
+    } finally {
+      if (!silent) {
+        setSystemdDetailLogsBusy(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (
+      activeMenu !== 'systemd' ||
+      systemdMode !== 'detail' ||
+      !selectedSystemdDetailService ||
+      !systemdDetailLogsRealtime
+    ) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void loadSystemdDetailLogs(selectedSystemdDetailService.id, true, true);
+    }, 2000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [activeMenu, loadSystemdDetailLogs, selectedSystemdDetailService, systemdDetailLogsRealtime, systemdMode]);
+
   const onOpenSystemdDetail = (service: SystemdDeployService) => {
     setSystemdMessage(null);
     setSystemdMessageIsError(false);
     setSystemdDetailServiceId(service.id);
     setSystemdDetailStatus(null);
+    setSystemdDetailLogs([]);
+    setSystemdDetailLogsCursor(null);
+    setSystemdDetailLogsRealtime(false);
     setSystemdMode('detail');
     void refreshSystemdDetailStatus(service.id);
+    void loadSystemdDetailLogs(service.id, false);
   };
 
   const onBackSystemdList = () => {
     setSystemdDetailServiceId(null);
     setSystemdDetailStatus(null);
+    setSystemdDetailAction(null);
+    setSystemdDetailLogsBusy(false);
+    setSystemdDetailLogsRealtime(false);
+    setSystemdDetailLogs([]);
+    setSystemdDetailLogsCursor(null);
     setSystemdMode('list');
     void refreshSystemdList();
+  };
+
+  const onToggleSystemdRealtimeLogs = () => {
+    if (!selectedSystemdDetailService) {
+      return;
+    }
+    if (systemdDetailLogsRealtime) {
+      setSystemdDetailLogsRealtime(false);
+      return;
+    }
+    setSystemdDetailLogsRealtime(true);
+    void loadSystemdDetailLogs(selectedSystemdDetailService.id, true, true);
+  };
+
+  const onDetailControlSystemd = async (action: 'start' | 'stop' | 'restart') => {
+    if (!selectedSystemdDetailService) {
+      return;
+    }
+
+    setSystemdDetailAction(action);
+    setSystemdMessage(null);
+    setSystemdMessageIsError(false);
+    try {
+      const result = await controlSystemdDeployService({ id: selectedSystemdDetailService.id, action });
+      setSystemdDetailStatus(result.status);
+      setSystemdMessage(`${selectedSystemdDetailService.service_name}.service ${action} 完成`);
+      setSystemdMessageIsError(false);
+    } catch (invokeError) {
+      setSystemdMessage(`操作失败：${formatInvokeError(invokeError)}`);
+      setSystemdMessageIsError(true);
+    } finally {
+      setSystemdDetailAction(null);
+    }
+  };
+
+  const onDeleteSystemdInDetail = async () => {
+    if (!selectedSystemdDetailService) {
+      return;
+    }
+    const confirmed = window.confirm(`确认删除部署服务“${selectedSystemdDetailService.name}”吗？`);
+    if (!confirmed) {
+      return;
+    }
+
+    setSystemdDetailAction('delete');
+    try {
+      await deleteSystemdDeployService({ id: selectedSystemdDetailService.id });
+      setSystemdMessage(`已删除部署服务：${selectedSystemdDetailService.name}`);
+      setSystemdMessageIsError(false);
+      onBackSystemdList();
+    } catch (invokeError) {
+      setSystemdMessage(`删除失败：${formatInvokeError(invokeError)}`);
+      setSystemdMessageIsError(true);
+    } finally {
+      setSystemdDetailAction(null);
+    }
   };
 
   const onSubmitSystemdForm = async () => {
@@ -542,7 +679,7 @@ export function ServersView({
                     type="button"
                     className="systemd-back-icon-btn"
                     onClick={onBackSystemdList}
-                    disabled={systemdBusy || systemdDetailStatusBusy}
+                    disabled={detailStatusActionDisabled}
                     aria-label="返回列表"
                     title="返回列表"
                   >
@@ -561,13 +698,44 @@ export function ServersView({
                   <h2>部署服务详情</h2>
                   <div className="section-actions">
                     {selectedSystemdDetailService && (
-                      <button
-                        type="button"
-                        onClick={() => void refreshSystemdDetailStatus(selectedSystemdDetailService.id)}
-                        disabled={systemdBusy || systemdDetailStatusBusy}
-                      >
-                        {systemdDetailStatusBusy ? '刷新中...' : '刷新状态'}
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void onDetailControlSystemd('start')}
+                          disabled={!canDetailStart}
+                        >
+                          {systemdDetailAction === 'start' ? '启动中...' : '启动'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void onDetailControlSystemd('stop')}
+                          disabled={!canDetailStop}
+                        >
+                          {systemdDetailAction === 'stop' ? '停止中...' : '停止'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void onDetailControlSystemd('restart')}
+                          disabled={detailStatusActionDisabled}
+                        >
+                          {systemdDetailAction === 'restart' ? '重启中...' : '重启'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void refreshSystemdDetailStatus(selectedSystemdDetailService.id)}
+                          disabled={detailStatusActionDisabled}
+                        >
+                          {systemdDetailStatusBusy ? '刷新中...' : '刷新状态'}
+                        </button>
+                        <button
+                          type="button"
+                          className="danger"
+                          onClick={onDeleteSystemdInDetail}
+                          disabled={detailStatusActionDisabled}
+                        >
+                          {systemdDetailAction === 'delete' ? '删除中...' : '删除'}
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -632,6 +800,34 @@ export function ServersView({
                             <p className="systemd-service-meta">停止命令</p>
                             <code className="systemd-example-code">{selectedSystemdDetailService.exec_stop}</code>
                           </>
+                        )}
+                      </article>
+
+                      <article className="host-card systemd-detail-code-card">
+                        <header className="host-card-header">
+                          <div>
+                            <h3>服务输出日志</h3>
+                            <p>支持增量读取与实时日志</p>
+                          </div>
+                          <div className="card-actions systemd-log-actions">
+                            <button
+                              type="button"
+                              onClick={() => void loadSystemdDetailLogs(selectedSystemdDetailService.id, false)}
+                              disabled={systemdDetailLogsBusy}
+                            >
+                              {systemdDetailLogsBusy ? '读取中...' : '查看日志'}
+                            </button>
+                            <button type="button" onClick={onToggleSystemdRealtimeLogs}>
+                              {systemdDetailLogsRealtime ? '停止实时日志' : '开启实时日志'}
+                            </button>
+                          </div>
+                        </header>
+                        {systemdDetailLogs.length > 0 ? (
+                          <pre className="systemd-log">{systemdDetailLogs.join('\n')}</pre>
+                        ) : (
+                          <p className="systemd-service-meta">
+                            {systemdDetailLogsBusy ? '正在读取日志...' : '暂无日志输出，可点击“查看日志”加载。'}
+                          </p>
                         )}
                       </article>
                     </div>

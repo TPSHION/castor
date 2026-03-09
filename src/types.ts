@@ -289,6 +289,12 @@ export type GetSystemdDeployServiceStatusRequest = {
   id: string;
 };
 
+export type GetSystemdDeployServiceLogsRequest = {
+  id: string;
+  lines?: number;
+  cursor?: string;
+};
+
 export type SystemdControlAction = 'start' | 'stop' | 'restart';
 
 export type ControlSystemdDeployServiceRequest = {
@@ -311,4 +317,9 @@ export type SystemdServiceActionResult = {
   stderr: string;
   exit_status: number;
   status: SystemdServiceStatus;
+};
+
+export type SystemdServiceLogsResult = {
+  lines: string[];
+  cursor?: string;
 };

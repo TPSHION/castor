@@ -5,13 +5,15 @@ use crate::deploy::{
     control_systemd_deploy_service as control_systemd_deploy_service_impl,
     delete_systemd_deploy_service as delete_systemd_deploy_service_impl,
     deploy_systemd_service as deploy_systemd_service_impl,
+    get_systemd_deploy_service_logs as get_systemd_deploy_service_logs_impl,
     get_systemd_deploy_service_status as get_systemd_deploy_service_status_impl,
     list_systemd_deploy_services as list_systemd_deploy_services_impl,
     upsert_systemd_deploy_service as upsert_systemd_deploy_service_impl,
     ApplySystemdDeployServiceRequest, ControlSystemdDeployServiceRequest,
     DeleteSystemdDeployServiceRequest, DeploySystemdServiceRequest, DeploySystemdServiceResult,
-    GetSystemdDeployServiceStatusRequest, SystemdDeployService, SystemdServiceActionResult,
-    SystemdServiceStatus, UpsertSystemdDeployServiceRequest,
+    GetSystemdDeployServiceLogsRequest, GetSystemdDeployServiceStatusRequest, SystemdDeployService,
+    SystemdServiceActionResult, SystemdServiceLogsResult, SystemdServiceStatus,
+    UpsertSystemdDeployServiceRequest,
 };
 use crate::localfs::{
     create_local_dir as create_local_dir_impl, delete_local_entry as delete_local_entry_impl,
@@ -252,6 +254,19 @@ pub async fn get_systemd_deploy_service_status(
     })
     .await
     .map_err(|err| format!("failed to join systemd status task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn get_systemd_deploy_service_logs(
+    app: AppHandle,
+    request: GetSystemdDeployServiceLogsRequest,
+) -> Result<SystemdServiceLogsResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        get_systemd_deploy_service_logs_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join systemd logs task: {err}"))?
 }
 
 #[tauri::command]

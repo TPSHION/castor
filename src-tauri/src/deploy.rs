@@ -107,6 +107,19 @@ pub struct SystemdServiceActionResult {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct GetSystemdDeployServiceLogsRequest {
+    pub id: String,
+    pub lines: Option<u32>,
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SystemdServiceLogsResult {
+    pub lines: Vec<String>,
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct DeploySystemdServiceRequest {
     pub profile_id: String,
     pub service_name: String,
@@ -351,6 +364,28 @@ pub fn control_systemd_deploy_service(
     })
 }
 
+pub fn get_systemd_deploy_service_logs(
+    app: &AppHandle,
+    request: GetSystemdDeployServiceLogsRequest,
+) -> Result<SystemdServiceLogsResult, String> {
+    let service = load_systemd_services(app)?
+        .into_iter()
+        .find(|item| item.id == request.id)
+        .ok_or_else(|| format!("systemd deploy service {} not found", request.id))?;
+
+    let profile = find_profile(app, &service.profile_id)?;
+    with_pooled_session(&profile, |session| {
+        query_service_logs(
+            session,
+            &service.service_name,
+            service.scope,
+            service.use_sudo,
+            request.lines,
+            request.cursor.as_deref(),
+        )
+    })
+}
+
 fn action_name(action: SystemdControlAction) -> &'static str {
     match action {
         SystemdControlAction::Start => "start",
@@ -483,6 +518,100 @@ fn query_service_status(
         summary,
         checked_at: now_unix(),
     })
+}
+
+fn query_service_logs(
+    session: &mut Session,
+    service_name: &str,
+    scope: SystemdScope,
+    use_sudo: bool,
+    lines: Option<u32>,
+    cursor: Option<&str>,
+) -> Result<SystemdServiceLogsResult, String> {
+    let service_file = service_file_name(service_name);
+    let prefix = journalctl_prefix(scope, use_sudo);
+    let line_limit = lines.unwrap_or(200).clamp(20, 1000);
+    let mut command = format!(
+        "{prefix} -u {} --no-pager --quiet --output=short-iso --show-cursor -n {line_limit}",
+        shell_quote(&service_file)
+    );
+    if let Some(value) = cursor.map(str::trim).filter(|item| !item.is_empty()) {
+        command.push_str(&format!(" --after-cursor {}", shell_quote(value)));
+    }
+    let script = format!("set -euo pipefail\n{command}");
+
+    let (stdout, stderr, exit_status) = run_remote_script(session, &script)?;
+    if exit_status != 0 {
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        return Err(format!(
+            "failed to read logs for {} (exit code {exit_status}): {}",
+            service_file,
+            if detail.is_empty() {
+                "unknown error"
+            } else {
+                detail
+            }
+        ));
+    }
+
+    Ok(parse_journalctl_output(&stdout, cursor))
+}
+
+fn parse_journalctl_output(raw: &str, previous_cursor: Option<&str>) -> SystemdServiceLogsResult {
+    let mut lines = Vec::new();
+    let mut next_cursor = None;
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed == "-- No entries --" || trimmed.starts_with("-- Logs begin at ") {
+            continue;
+        }
+        if let Some(cursor) = line.strip_prefix("-- cursor: ") {
+            let value = cursor.trim();
+            if !value.is_empty() {
+                next_cursor = Some(value.to_string());
+            }
+            continue;
+        }
+        lines.push(line.to_string());
+    }
+
+    if next_cursor.is_none() {
+        next_cursor = previous_cursor
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+    }
+
+    SystemdServiceLogsResult {
+        lines,
+        cursor: next_cursor,
+    }
+}
+
+fn journalctl_prefix(scope: SystemdScope, use_sudo: bool) -> String {
+    match scope {
+        SystemdScope::System => {
+            if use_sudo {
+                "sudo journalctl".to_string()
+            } else {
+                "journalctl".to_string()
+            }
+        }
+        SystemdScope::User => "journalctl --user".to_string(),
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        "''".to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
+    }
 }
 
 fn find_profile(app: &AppHandle, profile_id: &str) -> Result<ConnectionProfile, String> {
