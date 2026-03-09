@@ -690,6 +690,11 @@ export function ServersView({
     setSystemdLogFilterCaseSensitiveApplied(false);
   }, []);
 
+  const clearLoadedSystemdLogs = useCallback(() => {
+    resetSystemdLogBuffer();
+    setSystemdDetailLogs([]);
+  }, [resetSystemdLogBuffer]);
+
   const onDetailControlSystemd = async (action: 'start' | 'stop' | 'restart') => {
     if (!selectedSystemdDetailService) {
       return;
@@ -1072,6 +1077,13 @@ export function ServersView({
                       <>
                         <button
                           type="button"
+                          onClick={() => onEditSystemd(selectedSystemdDetailService)}
+                          disabled={detailStatusActionDisabled}
+                        >
+                          编辑
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => void onDetailControlSystemd('start')}
                           disabled={!canDetailStart}
                         >
@@ -1196,6 +1208,9 @@ export function ServersView({
                             </button>
                             <button type="button" onClick={onToggleSystemdRealtimeLogs} disabled={!canReadSystemdLogs}>
                               {systemdDetailLogsRealtime ? '停止实时日志' : '开启实时日志'}
+                            </button>
+                            <button type="button" onClick={clearLoadedSystemdLogs} disabled={!canReadSystemdLogs}>
+                              清空当前日志
                             </button>
                             <button type="button" onClick={() => setSystemdLogFullscreen(true)} disabled={!canReadSystemdLogs}>
                               全屏查看
@@ -1550,6 +1565,9 @@ export function ServersView({
                 </button>
                 <button type="button" onClick={onToggleSystemdRealtimeLogs} disabled={!canReadSystemdLogs}>
                   {systemdDetailLogsRealtime ? '停止实时日志' : '开启实时日志'}
+                </button>
+                <button type="button" onClick={clearLoadedSystemdLogs} disabled={!canReadSystemdLogs}>
+                  清空当前日志
                 </button>
                 <button type="button" onClick={() => setSystemdLogFullscreen(false)}>
                   关闭全屏

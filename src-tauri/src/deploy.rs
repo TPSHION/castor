@@ -686,11 +686,11 @@ fn query_service_file_logs(
         SystemdScope::System if use_sudo => "sudo",
         _ => "",
     };
-    let cursor_offset = cursor
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .and_then(|value| value.parse::<u64>().ok());
+    let (cursor_inode, cursor_offset) = parse_file_log_cursor(cursor);
     let cursor_number = cursor_offset
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-1".to_string());
+    let cursor_inode_number = cursor_inode
         .map(|value| value.to_string())
         .unwrap_or_else(|| "-1".to_string());
 
@@ -709,25 +709,35 @@ fn query_service_file_logs(
 log_path={log_path}
 line_limit={line_limit}
 cursor_offset={cursor_offset}
+cursor_inode={cursor_inode}
 size=$({wc_command} < "$log_path" 2>/dev/null | tr -d '[:space:]' || true)
+inode=$(stat -c '%i' "$log_path" 2>/dev/null | tr -d '[:space:]' || true)
 if [ -z "$size" ]; then
   size=0
 fi
+if [ -z "$inode" ]; then
+  inode=0
+fi
 if [ "$size" -eq 0 ]; then
-  echo "-- cursor: 0"
+  echo "-- cursor: ${{inode}}:0"
   exit 0
 fi
-if [ "$cursor_offset" -ge 0 ] && [ "$cursor_offset" -lt "$size" ]; then
-  start=$((cursor_offset + 1))
-  {tail_command} -c +"$start" "$log_path" || true
+if [ "$cursor_offset" -ge 0 ]; then
+  if [ "$cursor_inode" -ge 0 ] && [ "$cursor_inode" -ne "$inode" ]; then
+    {tail_command} -n "$line_limit" "$log_path" || true
+  elif [ "$cursor_offset" -lt "$size" ]; then
+    start=$((cursor_offset + 1))
+    {tail_command} -c +"$start" "$log_path" || true
+  fi
 else
   {tail_command} -n "$line_limit" "$log_path" || true
 fi
-echo "-- cursor: $size"
+echo "-- cursor: ${{inode}}:$size"
 "#,
         log_path = shell_quote(log_path),
         line_limit = line_limit,
         cursor_offset = cursor_number,
+        cursor_inode = cursor_inode_number,
         wc_command = wc_command,
         tail_command = tail_command
     );
@@ -751,6 +761,21 @@ echo "-- cursor: $size"
     Ok(parse_journalctl_output(&stdout, cursor))
 }
 
+fn parse_file_log_cursor(cursor: Option<&str>) -> (Option<u64>, Option<u64>) {
+    let value = match cursor.map(str::trim).filter(|item| !item.is_empty()) {
+        Some(value) => value,
+        None => return (None, None),
+    };
+
+    if let Some((inode_part, offset_part)) = value.split_once(':') {
+        let inode = inode_part.trim().parse::<u64>().ok();
+        let offset = offset_part.trim().parse::<u64>().ok();
+        return (inode, offset);
+    }
+
+    (None, value.parse::<u64>().ok())
+}
+
 fn parse_journalctl_output(raw: &str, previous_cursor: Option<&str>) -> SystemdServiceLogsResult {
     let mut lines = Vec::new();
     let mut next_cursor = None;
@@ -767,7 +792,7 @@ fn parse_journalctl_output(raw: &str, previous_cursor: Option<&str>) -> SystemdS
             }
             continue;
         }
-        lines.push(line.to_string());
+        lines.push(strip_ansi_escape_codes(line));
     }
 
     if next_cursor.is_none() {
@@ -781,6 +806,62 @@ fn parse_journalctl_output(raw: &str, previous_cursor: Option<&str>) -> SystemdS
         lines,
         cursor: next_cursor,
     }
+}
+
+fn strip_ansi_escape_codes(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut output = String::with_capacity(input.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == 0x1B {
+            index += 1;
+            if index >= bytes.len() {
+                break;
+            }
+
+            match bytes[index] {
+                b'[' => {
+                    // CSI: ESC [ ... final-byte
+                    index += 1;
+                    while index < bytes.len() {
+                        let b = bytes[index];
+                        if (0x40..=0x7E).contains(&b) {
+                            index += 1;
+                            break;
+                        }
+                        index += 1;
+                    }
+                }
+                b']' => {
+                    // OSC: ESC ] ... (BEL or ESC \)
+                    index += 1;
+                    while index < bytes.len() {
+                        let b = bytes[index];
+                        if b == 0x07 {
+                            index += 1;
+                            break;
+                        }
+                        if b == 0x1B && index + 1 < bytes.len() && bytes[index + 1] == b'\\' {
+                            index += 2;
+                            break;
+                        }
+                        index += 1;
+                    }
+                }
+                _ => {
+                    // Other 2-byte escape sequences.
+                    index += 1;
+                }
+            }
+            continue;
+        }
+
+        output.push(bytes[index] as char);
+        index += 1;
+    }
+
+    output
 }
 
 fn journalctl_prefix(scope: SystemdScope, use_sudo: bool) -> String {
