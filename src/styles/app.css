@@ -1143,8 +1143,42 @@ button.danger {
   word-break: break-word;
 }
 
+.systemd-log-keyword {
+  color: #ff8f98;
+  background: rgb(208 45 65 / 24%);
+  border-radius: 3px;
+  padding: 0 1px;
+  font-weight: 600;
+}
+
 .systemd-log-actions {
   justify-content: flex-end;
+}
+
+.systemd-log-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.systemd-log-filter-fullscreen {
+  padding: 8px 12px 0;
+  margin-bottom: 0;
+}
+
+.systemd-log-filter-input {
+  flex: 1 1 auto;
+  min-width: 180px;
+  font-size: 0.78rem;
+}
+
+.systemd-log-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .systemd-log-fullscreen-overlay {

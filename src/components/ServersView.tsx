@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   applySystemdDeployService,
   controlSystemdDeployService,
@@ -59,8 +60,9 @@ type SystemdDeleteDialogState = {
 type SystemdServiceType = 'node' | 'python' | 'java' | 'go' | 'dotnet' | 'docker' | 'custom';
 
 const SYSTEMD_SERVICE_TYPES: SystemdServiceType[] = ['node', 'python', 'java', 'go', 'dotnet', 'docker', 'custom'];
-const SYSTEMD_LOG_FETCH_LINES = 200;
+const SYSTEMD_LOG_FETCH_LINES = 120;
 const SYSTEMD_LOG_MAX_LINES = 1000;
+const SYSTEMD_LOG_FLUSH_INTERVAL_MS = 300;
 const SYSTEMD_LOG_OUTPUT_MODE_OPTIONS: Array<{ value: SystemdLogOutputMode; label: string }> = [
   { value: 'journal', label: 'systemd journal (默认)' },
   { value: 'file', label: '输出到文件' },
@@ -155,6 +157,51 @@ function systemdLogOutputPathLabel(service: SystemdDeployService): string {
   return service.log_output_path?.trim() || defaultSystemdLogOutputPath(service.service_name);
 }
 
+function buildHighlightedLogSegments(line: string, keyword: string, caseSensitive: boolean): ReactNode[] {
+  const needle = keyword.trim();
+  if (!needle) {
+    return [line];
+  }
+
+  const source = caseSensitive ? line : line.toLowerCase();
+  const token = caseSensitive ? needle : needle.toLowerCase();
+  if (!token) {
+    return [line];
+  }
+
+  const segments: ReactNode[] = [];
+  let cursor = 0;
+  let matchIndex = 0;
+
+  while (cursor <= line.length) {
+    const index = source.indexOf(token, cursor);
+    if (index < 0) {
+      if (cursor < line.length) {
+        segments.push(line.slice(cursor));
+      }
+      break;
+    }
+
+    if (index > cursor) {
+      segments.push(line.slice(cursor, index));
+    }
+
+    const hit = line.slice(index, index + needle.length);
+    segments.push(
+      <span key={`log-hit-${index}-${matchIndex}`} className="systemd-log-keyword">
+        {hit}
+      </span>
+    );
+    cursor = index + needle.length;
+    matchIndex += 1;
+  }
+
+  if (segments.length === 0) {
+    return [line];
+  }
+  return segments;
+}
+
 function createSystemdForm(profile?: ConnectionProfile | null): SystemdFormState {
   const serviceName = 'my-app';
   return {
@@ -232,10 +279,17 @@ export function ServersView({
   const [systemdDetailLogsRealtime, setSystemdDetailLogsRealtime] = useState(false);
   const [systemdDetailLogs, setSystemdDetailLogs] = useState<string[]>([]);
   const [systemdDetailLogsCursor, setSystemdDetailLogsCursor] = useState<string | null>(null);
+  const [systemdLogFilterKeywordDraft, setSystemdLogFilterKeywordDraft] = useState('');
+  const [systemdLogFilterCaseSensitiveDraft, setSystemdLogFilterCaseSensitiveDraft] = useState(false);
+  const [systemdLogFilterKeywordApplied, setSystemdLogFilterKeywordApplied] = useState('');
+  const [systemdLogFilterCaseSensitiveApplied, setSystemdLogFilterCaseSensitiveApplied] = useState(false);
   const [systemdLogFullscreen, setSystemdLogFullscreen] = useState(false);
   const [systemdMessage, setSystemdMessage] = useState<string | null>(null);
   const [systemdMessageIsError, setSystemdMessageIsError] = useState(false);
   const systemdDetailLogsCursorRef = useRef<string | null>(null);
+  const systemdDetailLogsRealtimeRef = useRef(false);
+  const pendingSystemdLogLinesRef = useRef<string[]>([]);
+  const systemdLogFlushTimerRef = useRef<number | null>(null);
   const systemdLogPanelRef = useRef<HTMLPreElement | null>(null);
   const systemdLogFullscreenRef = useRef<HTMLPreElement | null>(null);
 
@@ -259,6 +313,41 @@ export function ServersView({
     () => SYSTEMD_EXECSTART_EXAMPLES[systemdForm.serviceType],
     [systemdForm.serviceType]
   );
+  const isSystemdLogFilterDirty = useMemo(() => {
+    return (
+      systemdLogFilterKeywordDraft.trim() !== systemdLogFilterKeywordApplied.trim() ||
+      systemdLogFilterCaseSensitiveDraft !== systemdLogFilterCaseSensitiveApplied
+    );
+  }, [
+    systemdLogFilterCaseSensitiveApplied,
+    systemdLogFilterCaseSensitiveDraft,
+    systemdLogFilterKeywordApplied,
+    systemdLogFilterKeywordDraft
+  ]);
+  const hasAppliedSystemdLogFilter = useMemo(
+    () => Boolean(systemdLogFilterKeywordApplied.trim()),
+    [systemdLogFilterKeywordApplied]
+  );
+  const filteredSystemdDetailLogs = useMemo(() => {
+    const keyword = systemdLogFilterKeywordApplied.trim();
+    if (!keyword) {
+      return systemdDetailLogs;
+    }
+    if (systemdLogFilterCaseSensitiveApplied) {
+      return systemdDetailLogs.filter((line) => line.includes(keyword));
+    }
+    const needle = keyword.toLowerCase();
+    return systemdDetailLogs.filter((line) => line.toLowerCase().includes(needle));
+  }, [systemdDetailLogs, systemdLogFilterCaseSensitiveApplied, systemdLogFilterKeywordApplied]);
+  const highlightedSystemdLogNodes = useMemo(() => {
+    const keyword = systemdLogFilterKeywordApplied.trim();
+    return filteredSystemdDetailLogs.map((line, index) => (
+      <Fragment key={`systemd-log-line-${index}`}>
+        {buildHighlightedLogSegments(line, keyword, systemdLogFilterCaseSensitiveApplied)}
+        {index < filteredSystemdDetailLogs.length - 1 ? '\n' : null}
+      </Fragment>
+    ));
+  }, [filteredSystemdDetailLogs, systemdLogFilterCaseSensitiveApplied, systemdLogFilterKeywordApplied]);
   const isDetailRunning = systemdDetailStatus?.summary === 'running';
   const canDetailStart = !systemdBusy && !systemdDetailStatusBusy && !systemdDetailAction && !isDetailRunning;
   const canDetailStop = !systemdBusy && !systemdDetailStatusBusy && !systemdDetailAction && isDetailRunning;
@@ -313,6 +402,10 @@ export function ServersView({
   }, [systemdDetailLogsCursor]);
 
   useEffect(() => {
+    systemdDetailLogsRealtimeRef.current = systemdDetailLogsRealtime;
+  }, [systemdDetailLogsRealtime]);
+
+  useEffect(() => {
     if (!systemdDetailLogsRealtime) {
       return;
     }
@@ -343,6 +436,14 @@ export function ServersView({
       window.removeEventListener('keydown', onEsc);
     };
   }, [systemdLogFullscreen]);
+
+  useEffect(() => {
+    return () => {
+      if (systemdLogFlushTimerRef.current !== null) {
+        window.clearTimeout(systemdLogFlushTimerRef.current);
+      }
+    };
+  }, []);
 
   const refreshSystemdList = useCallback(async () => {
     setSystemdBusy(true);
@@ -393,6 +494,51 @@ export function ServersView({
     }
   }, []);
 
+  const appendSystemdLogs = useCallback((lines: string[]) => {
+    setSystemdDetailLogs((previous) => {
+      const merged = [...previous, ...lines];
+      if (merged.length <= SYSTEMD_LOG_MAX_LINES) {
+        return merged;
+      }
+      return merged.slice(merged.length - SYSTEMD_LOG_MAX_LINES);
+    });
+  }, []);
+
+  const flushPendingSystemdLogs = useCallback(() => {
+    const queued = pendingSystemdLogLinesRef.current;
+    if (queued.length === 0) {
+      return;
+    }
+    pendingSystemdLogLinesRef.current = [];
+    appendSystemdLogs(queued);
+  }, [appendSystemdLogs]);
+
+  const scheduleSystemdLogFlush = useCallback(() => {
+    if (systemdLogFlushTimerRef.current !== null) {
+      return;
+    }
+    systemdLogFlushTimerRef.current = window.setTimeout(() => {
+      systemdLogFlushTimerRef.current = null;
+      flushPendingSystemdLogs();
+    }, SYSTEMD_LOG_FLUSH_INTERVAL_MS);
+  }, [flushPendingSystemdLogs]);
+
+  const flushSystemdLogBufferNow = useCallback(() => {
+    if (systemdLogFlushTimerRef.current !== null) {
+      window.clearTimeout(systemdLogFlushTimerRef.current);
+      systemdLogFlushTimerRef.current = null;
+    }
+    flushPendingSystemdLogs();
+  }, [flushPendingSystemdLogs]);
+
+  const resetSystemdLogBuffer = useCallback(() => {
+    pendingSystemdLogLinesRef.current = [];
+    if (systemdLogFlushTimerRef.current !== null) {
+      window.clearTimeout(systemdLogFlushTimerRef.current);
+      systemdLogFlushTimerRef.current = null;
+    }
+  }, []);
+
   const loadSystemdDetailLogs = useCallback(async (serviceId: string, incremental: boolean, silent = false) => {
     if (!silent) {
       setSystemdDetailLogsBusy(true);
@@ -406,15 +552,15 @@ export function ServersView({
       setSystemdDetailLogsCursor(result.cursor ?? null);
       if (incremental) {
         if (result.lines.length > 0) {
-          setSystemdDetailLogs((previous) => {
-            const merged = [...previous, ...result.lines];
-            if (merged.length <= SYSTEMD_LOG_MAX_LINES) {
-              return merged;
-            }
-            return merged.slice(merged.length - SYSTEMD_LOG_MAX_LINES);
-          });
+          if (silent && systemdDetailLogsRealtimeRef.current) {
+            pendingSystemdLogLinesRef.current.push(...result.lines);
+            scheduleSystemdLogFlush();
+          } else {
+            appendSystemdLogs(result.lines);
+          }
         }
       } else {
+        resetSystemdLogBuffer();
         const next = result.lines.length <= SYSTEMD_LOG_MAX_LINES
           ? result.lines
           : result.lines.slice(result.lines.length - SYSTEMD_LOG_MAX_LINES);
@@ -428,7 +574,7 @@ export function ServersView({
         setSystemdDetailLogsBusy(false);
       }
     }
-  }, []);
+  }, [appendSystemdLogs, resetSystemdLogBuffer, scheduleSystemdLogFlush]);
 
   useEffect(() => {
     if (
@@ -440,6 +586,9 @@ export function ServersView({
       return;
     }
     const timer = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') {
+        return;
+      }
       void loadSystemdDetailLogs(selectedSystemdDetailService.id, true, true);
     }, 2000);
     return () => {
@@ -452,9 +601,14 @@ export function ServersView({
     setSystemdMessageIsError(false);
     setSystemdDetailServiceId(service.id);
     setSystemdDetailStatus(null);
+    resetSystemdLogBuffer();
     setSystemdDetailLogs([]);
     setSystemdDetailLogsCursor(null);
     setSystemdDetailLogsRealtime(false);
+    setSystemdLogFilterKeywordDraft('');
+    setSystemdLogFilterCaseSensitiveDraft(false);
+    setSystemdLogFilterKeywordApplied('');
+    setSystemdLogFilterCaseSensitiveApplied(false);
     setSystemdLogFullscreen(false);
     setSystemdMode('detail');
     void refreshSystemdDetailStatus(service.id);
@@ -464,10 +618,15 @@ export function ServersView({
     setSystemdDetailServiceId(null);
     setSystemdDetailStatus(null);
     setSystemdDetailAction(null);
+    resetSystemdLogBuffer();
     setSystemdDetailLogsBusy(false);
     setSystemdDetailLogsRealtime(false);
     setSystemdDetailLogs([]);
     setSystemdDetailLogsCursor(null);
+    setSystemdLogFilterKeywordDraft('');
+    setSystemdLogFilterCaseSensitiveDraft(false);
+    setSystemdLogFilterKeywordApplied('');
+    setSystemdLogFilterCaseSensitiveApplied(false);
     setSystemdLogFullscreen(false);
     setSystemdMode('list');
     void refreshSystemdList();
@@ -478,6 +637,7 @@ export function ServersView({
       return;
     }
     if (systemdDetailLogsRealtime) {
+      flushSystemdLogBufferNow();
       setSystemdDetailLogsRealtime(false);
       return;
     }
@@ -485,6 +645,18 @@ export function ServersView({
     const shouldLoadSnapshot = systemdDetailLogs.length === 0 && !systemdDetailLogsCursorRef.current;
     void loadSystemdDetailLogs(selectedSystemdDetailService.id, !shouldLoadSnapshot, true);
   };
+
+  const applySystemdLogFilter = useCallback(() => {
+    setSystemdLogFilterKeywordApplied(systemdLogFilterKeywordDraft);
+    setSystemdLogFilterCaseSensitiveApplied(systemdLogFilterCaseSensitiveDraft);
+  }, [systemdLogFilterCaseSensitiveDraft, systemdLogFilterKeywordDraft]);
+
+  const clearSystemdLogFilter = useCallback(() => {
+    setSystemdLogFilterKeywordDraft('');
+    setSystemdLogFilterCaseSensitiveDraft(false);
+    setSystemdLogFilterKeywordApplied('');
+    setSystemdLogFilterCaseSensitiveApplied(false);
+  }, []);
 
   const onDetailControlSystemd = async (action: 'start' | 'stop' | 'restart') => {
     if (!selectedSystemdDetailService) {
@@ -947,10 +1119,48 @@ export function ServersView({
                             </button>
                           </div>
                         </header>
-                        {systemdDetailLogs.length > 0 ? (
-                          <pre ref={systemdLogPanelRef} className="systemd-log">{systemdDetailLogs.join('\n')}</pre>
+                        <div className="systemd-log-filter">
+                          <input
+                            className="systemd-log-filter-input"
+                            value={systemdLogFilterKeywordDraft}
+                            onChange={(event) => setSystemdLogFilterKeywordDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                applySystemdLogFilter();
+                              }
+                            }}
+                            placeholder="关键字过滤当前已加载日志"
+                            {...textInputProps}
+                          />
+                          <button
+                            type="button"
+                            onClick={applySystemdLogFilter}
+                            disabled={!isSystemdLogFilterDirty}
+                          >
+                            过滤
+                          </button>
+                          <button
+                            type="button"
+                            onClick={clearSystemdLogFilter}
+                            disabled={!systemdLogFilterKeywordDraft && !hasAppliedSystemdLogFilter}
+                          >
+                            清空
+                          </button>
+                          <label className="systemd-log-filter-toggle">
+                            <input
+                              type="checkbox"
+                              checked={systemdLogFilterCaseSensitiveDraft}
+                              onChange={(event) => setSystemdLogFilterCaseSensitiveDraft(event.target.checked)}
+                            />
+                            区分大小写
+                          </label>
+                        </div>
+                        {filteredSystemdDetailLogs.length > 0 ? (
+                          <pre ref={systemdLogPanelRef} className="systemd-log">{highlightedSystemdLogNodes}</pre>
                         ) : !canReadSystemdLogs ? (
                           <p className="systemd-service-meta">当前服务已配置为不输出日志。</p>
+                        ) : hasAppliedSystemdLogFilter ? (
+                          <p className="systemd-service-meta">未匹配到过滤结果，可清空关键字后重试。</p>
                         ) : (
                           <p className="systemd-service-meta">
                             {systemdDetailLogsBusy ? '正在读取日志...' : '暂无日志输出，可点击“查看日志”加载。'}
@@ -1249,12 +1459,51 @@ export function ServersView({
               </div>
             </div>
 
-            {systemdDetailLogs.length > 0 ? (
+            <div className="systemd-log-filter systemd-log-filter-fullscreen">
+              <input
+                className="systemd-log-filter-input"
+                value={systemdLogFilterKeywordDraft}
+                onChange={(event) => setSystemdLogFilterKeywordDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    applySystemdLogFilter();
+                  }
+                }}
+                placeholder="关键字过滤当前已加载日志"
+                {...textInputProps}
+              />
+              <button
+                type="button"
+                onClick={applySystemdLogFilter}
+                disabled={!isSystemdLogFilterDirty}
+              >
+                过滤
+              </button>
+              <button
+                type="button"
+                onClick={clearSystemdLogFilter}
+                disabled={!systemdLogFilterKeywordDraft && !hasAppliedSystemdLogFilter}
+              >
+                清空
+              </button>
+              <label className="systemd-log-filter-toggle">
+                <input
+                  type="checkbox"
+                  checked={systemdLogFilterCaseSensitiveDraft}
+                  onChange={(event) => setSystemdLogFilterCaseSensitiveDraft(event.target.checked)}
+                />
+                区分大小写
+              </label>
+            </div>
+
+            {filteredSystemdDetailLogs.length > 0 ? (
               <pre ref={systemdLogFullscreenRef} className="systemd-log systemd-log-fullscreen">
-                {systemdDetailLogs.join('\n')}
+                {highlightedSystemdLogNodes}
               </pre>
             ) : !canReadSystemdLogs ? (
               <p className="systemd-service-meta systemd-log-fullscreen-empty">当前服务已配置为不输出日志。</p>
+            ) : hasAppliedSystemdLogFilter ? (
+              <p className="systemd-service-meta systemd-log-fullscreen-empty">未匹配到过滤结果，可清空关键字后重试。</p>
             ) : (
               <p className="systemd-service-meta systemd-log-fullscreen-empty">
                 {systemdDetailLogsBusy ? '正在读取日志...' : '暂无日志输出，可点击“查看日志”加载。'}
