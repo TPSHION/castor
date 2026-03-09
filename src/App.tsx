@@ -1,4 +1,4 @@
-import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -14,135 +14,159 @@ import { SftpView } from './components/SftpView';
 import { WorkspaceView } from './components/WorkspaceView';
 import type {
   AuthConfig,
-  ConnectRequest,
-  DeleteConnectionProfileRequest,
-  LocalCreateDirRequest,
-  LocalDeleteRequest,
   LocalFsEntry,
-  LocalListRequest,
-  LocalListResponse,
-  LocalConnectRequest,
-  LocalRenameRequest,
-  OutputPayload,
-  SessionSummary,
-  SftpCreateDirRequest,
-  SftpDeleteRequest,
   SftpDownloadRequest,
   SftpDownloadResult,
   SftpEntry,
-  SftpListRequest,
   SftpUploadRequest,
   SftpUploadResult,
   SftpTransferProgressPayload,
-  SftpUploadConflictStrategy,
-  SftpRenameRequest,
-  SftpSetPermissionsRequest,
-  UpsertConnectionProfileRequest
+  SftpUploadConflictStrategy
 } from './types';
-import type {
-  ContentView,
-  EditorMode,
-  LocalActionDialogState,
-  LocalUploadConflictDialogState,
-  LocalContextMenuState,
-  ProfileEditor,
-  SessionTab,
-  SftpActionDialogState,
-  SftpContextMenuState,
-  TestState,
-  ConnectionProfile
-} from './app/types';
+import type { ContentView, LocalUploadConflictDialogState, ConnectionProfile } from './app/types';
 import {
-  buildAuthFromEditor,
   buildAuthFromProfile,
-  createClientTabId,
-  createEmptyEditor,
   defaultPermissionInput,
   formatBytes,
   formatInvokeError,
   formatPermissionMode,
-  formatUnixTime,
-  normalizeRemotePath,
-  parentRemotePath,
-  parsePermissionInput,
-  validateEditor
+  formatUnixTime
 } from './app/helpers';
 import { useContextMenuDismiss } from './app/hooks/useContextMenuDismiss';
+import { useProfilesManager } from './app/hooks/useProfilesManager';
 import { useScrollbarWidthVariable } from './app/hooks/useScrollbarWidthVariable';
+import { useLocalFilePane } from './app/hooks/useLocalFilePane';
+import { useSessionManager } from './app/hooks/useSessionManager';
+import { useSftpPane } from './app/hooks/useSftpPane';
 import { useSystemDropUploadQueue } from './app/hooks/useSystemDropUploadQueue';
 import { useTransferProgressManager } from './app/hooks/useTransferProgressManager';
+import { useWindowTitlebarOverlay } from './app/hooks/useWindowTitlebarOverlay';
 
 export function App() {
   const MIN_TRANSFER_PROGRESS_VISIBLE_MS = 600;
   const localTransferManager = useTransferProgressManager({ minVisibleMs: MIN_TRANSFER_PROGRESS_VISIBLE_MS });
   const sftpTransferManager = useTransferProgressManager({ minVisibleMs: MIN_TRANSFER_PROGRESS_VISIBLE_MS });
   const [contentView, setContentView] = useState<ContentView>('servers');
-  const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
-  const [profilesBusy, setProfilesBusy] = useState(false);
-  const [profileMessage, setProfileMessage] = useState<string | null>(null);
+  const {
+    profiles,
+    profilesBusy,
+    profileMessage,
+    setProfileMessage,
+    refreshProfiles,
+    isEditorOpen,
+    editorMode,
+    editor,
+    setEditor,
+    editorBusy,
+    testState,
+    editorValidation,
+    isQuickConnectOpen,
+    openCreateEditor,
+    openEditEditor,
+    closeEditor,
+    openQuickConnect,
+    closeQuickConnect,
+    onSaveEditor,
+    onTestConnection,
+    onDeleteProfile
+  } = useProfilesManager();
 
-  const [isEditorOpen, setIsEditorOpen] = useState(false);
-  const [editorMode, setEditorMode] = useState<EditorMode>('create');
-  const [editor, setEditor] = useState<ProfileEditor>(createEmptyEditor());
-  const [editorBusy, setEditorBusy] = useState(false);
-  const [testState, setTestState] = useState<TestState>({ phase: 'idle', message: '' });
-  const [isQuickConnectOpen, setIsQuickConnectOpen] = useState(false);
-
-  const [localPath, setLocalPath] = useState<string>('');
-  const [localPathInput, setLocalPathInput] = useState<string>('');
-  const [localParentPath, setLocalParentPath] = useState<string | null>(null);
-  const [localEntries, setLocalEntries] = useState<LocalFsEntry[]>([]);
-  const [localBusy, setLocalBusy] = useState(false);
-  const [localMessage, setLocalMessage] = useState<string | null>(null);
-  const [localSelectedPath, setLocalSelectedPath] = useState<string | null>(null);
-  const [localContextMenu, setLocalContextMenu] = useState<LocalContextMenuState | null>(null);
-  const [localActionDialog, setLocalActionDialog] = useState<LocalActionDialogState>(null);
+  const {
+    localPath,
+    localPathInput,
+    setLocalPathInput,
+    localParentPath,
+    localEntries,
+    localBusy,
+    localMessage,
+    setLocalMessage,
+    localSelectedPath,
+    setLocalSelectedPath,
+    localContextMenu,
+    setLocalContextMenu,
+    closeLocalContextMenu,
+    localActionDialog,
+    setLocalActionDialog,
+    localActionError,
+    setLocalActionError,
+    loadLocalDir,
+    onLocalOpenPath,
+    onLocalGoParent,
+    onLocalEnterDir,
+    closeLocalActionDialog,
+    updateLocalActionValue,
+    openLocalContextMenuAt: openLocalContextMenuAtCore,
+    submitLocalActionDialog
+  } = useLocalFilePane();
   const [localUploadConflictDialog, setLocalUploadConflictDialog] = useState<LocalUploadConflictDialogState>(null);
   const [localUploadConflictRenameValue, setLocalUploadConflictRenameValue] = useState('');
   const [localUploadConflictError, setLocalUploadConflictError] = useState<string | null>(null);
-  const [localActionError, setLocalActionError] = useState<string | null>(null);
   const localTransferProgresses = localTransferManager.progresses;
   const localCompletedTransferProgresses = localTransferManager.completed;
   const localContextMenuRef = useRef<HTMLDivElement>(null);
 
-  const [selectedSftpProfileId, setSelectedSftpProfileId] = useState<string>('');
-  const [connectedSftpProfileId, setConnectedSftpProfileId] = useState<string>('');
-  const [sftpPath, setSftpPath] = useState<string>('/root');
-  const [sftpPathInput, setSftpPathInput] = useState<string>('/root');
-  const [sftpEntries, setSftpEntries] = useState<SftpEntry[]>([]);
-  const [sftpBusy, setSftpBusy] = useState(false);
-  const [sftpMessage, setSftpMessage] = useState<string | null>(null);
-  const [sftpSelectedPath, setSftpSelectedPath] = useState<string | null>(null);
-  const [sftpContextMenu, setSftpContextMenu] = useState<SftpContextMenuState | null>(null);
-  const [sftpActionDialog, setSftpActionDialog] = useState<SftpActionDialogState>(null);
-  const [sftpActionError, setSftpActionError] = useState<string | null>(null);
+  const {
+    selectedSftpProfileId,
+    setSelectedSftpProfileId,
+    connectedSftpProfileId,
+    setConnectedSftpProfileId,
+    selectedSftpProfile,
+    connectedSftpProfile,
+    sftpPath,
+    setSftpPath,
+    sftpPathInput,
+    setSftpPathInput,
+    sftpEntries,
+    setSftpEntries,
+    sftpBusy,
+    sftpMessage,
+    setSftpMessage,
+    sftpSelectedPath,
+    setSftpSelectedPath,
+    sftpContextMenu,
+    setSftpContextMenu,
+    closeSftpContextMenu,
+    sftpActionDialog,
+    setSftpActionDialog,
+    sftpActionError,
+    setSftpActionError,
+    loadSftpDir,
+    onSelectSftpProfile: onSelectSftpProfileCore,
+    onConnectSftpHost,
+    onOpenSftpPath,
+    onSftpGoParent,
+    onSftpEnterDir,
+    closeSftpActionDialog,
+    updateSftpActionValue,
+    openSftpContextMenuAt: openSftpContextMenuAtCore,
+    submitSftpActionDialog
+  } = useSftpPane(profiles);
   const sftpTransferProgresses = sftpTransferManager.progresses;
   const sftpCompletedTransferProgresses = sftpTransferManager.completed;
   const sftpContextMenuRef = useRef<HTMLDivElement>(null);
 
-  const [sessionTabs, setSessionTabs] = useState<SessionTab[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const closeLocalContextMenu = useCallback(() => setLocalContextMenu(null), []);
-  const closeSftpContextMenu = useCallback(() => setSftpContextMenu(null), []);
+  const {
+    sessionTabs,
+    activeTabId,
+    activeTab,
+    connectedCount,
+    connectProfile: onConnectProfile,
+    connectLocalTerminal: onConnectLocalTerminal,
+    closeTab,
+    disconnectActiveTab: onDisconnectActiveTab,
+    retryActiveTab,
+    openTab
+  } = useSessionManager({
+    profiles,
+    onShowWorkspace: () => setContentView('workspace'),
+    onShowServers: () => setContentView('servers'),
+    onProfileMessage: setProfileMessage
+  });
 
   useScrollbarWidthVariable('--sftp-body-scrollbar-width');
+  useWindowTitlebarOverlay();
   useContextMenuDismiss(Boolean(localContextMenu), localContextMenuRef, closeLocalContextMenu);
   useContextMenuDismiss(Boolean(sftpContextMenu), sftpContextMenuRef, closeSftpContextMenu);
-
-  const activeTab = useMemo(
-    () => sessionTabs.find((tab) => tab.id === activeTabId) ?? null,
-    [activeTabId, sessionTabs]
-  );
-  const selectedSftpProfile = useMemo(
-    () => profiles.find((profile) => profile.id === selectedSftpProfileId) ?? null,
-    [profiles, selectedSftpProfileId]
-  );
-  const connectedSftpProfile = useMemo(
-    () => profiles.find((profile) => profile.id === connectedSftpProfileId) ?? null,
-    [profiles, connectedSftpProfileId]
-  );
-
-  const editorValidation = useMemo(() => validateEditor(editor), [editor]);
 
   function createTransferId() {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -200,57 +224,31 @@ export function App() {
     uploadSystemPathToTarget
   });
 
-  useEffect(() => {
-    void refreshProfiles();
-  }, []);
+  const onSelectSftpProfile = useCallback(
+    (profileId: string) => {
+      onSelectSftpProfileCore(profileId, {
+        onSwitchedConnectedProfile: systemDropUploadQueue.resetSystemQueue
+      });
+    },
+    [onSelectSftpProfileCore, systemDropUploadQueue.resetSystemQueue]
+  );
 
-  useEffect(() => {
-    const isMacOs = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
-    document.body.classList.toggle('window-titlebar-overlay', isMacOs);
-    if (!isMacOs) {
-      return () => {
-        document.body.classList.remove('window-titlebar-overlay');
-        document.body.classList.remove('window-fullscreen');
-      };
-    }
+  function openLocalContextMenuAt(x: number, y: number, entry: LocalFsEntry | null) {
+    setSftpContextMenu(null);
+    setLocalActionDialog(null);
+    setLocalUploadConflictDialog(null);
+    setLocalUploadConflictRenameValue('');
+    setLocalUploadConflictError(null);
+    setLocalActionError(null);
+    openLocalContextMenuAtCore(x, y, entry);
+  }
 
-    const appWindow = getCurrentWindow();
-    let disposed = false;
-    let unlistenResize: (() => void) | null = null;
-
-    const syncFullscreenState = async () => {
-      try {
-        const isFullscreen = await appWindow.isFullscreen();
-        if (!disposed) {
-          document.body.classList.toggle('window-fullscreen', isFullscreen);
-        }
-      } catch {
-        if (!disposed) {
-          document.body.classList.remove('window-fullscreen');
-        }
-      }
-    };
-
-    void syncFullscreenState();
-    void appWindow.onResized(() => {
-      void syncFullscreenState();
-    }).then((unlisten) => {
-      if (disposed) {
-        unlisten();
-        return;
-      }
-      unlistenResize = unlisten;
-    });
-
-    return () => {
-      disposed = true;
-      if (unlistenResize) {
-        unlistenResize();
-      }
-      document.body.classList.remove('window-titlebar-overlay');
-      document.body.classList.remove('window-fullscreen');
-    };
-  }, []);
+  function openSftpContextMenuAt(x: number, y: number, entry: SftpEntry | null) {
+    setLocalContextMenu(null);
+    setSftpActionDialog(null);
+    setSftpActionError(null);
+    openSftpContextMenuAtCore(x, y, entry);
+  }
 
   useEffect(() => {
     if (profiles.length === 0) {
@@ -292,75 +290,12 @@ export function App() {
   }, [profiles, selectedSftpProfileId, connectedSftpProfileId]);
 
   useEffect(() => {
-    if (!localSelectedPath) {
-      return;
-    }
-    if (localEntries.some((entry) => entry.path === localSelectedPath)) {
-      return;
-    }
-    setLocalSelectedPath(null);
-  }, [localEntries, localSelectedPath]);
-
-  useEffect(() => {
-    if (!sftpSelectedPath) {
-      return;
-    }
-    if (sftpEntries.some((entry) => entry.path === sftpSelectedPath)) {
-      return;
-    }
-    setSftpSelectedPath(null);
-  }, [sftpEntries, sftpSelectedPath]);
-
-  useEffect(() => {
     setLocalContextMenu(null);
     setSftpContextMenu(null);
     setLocalUploadConflictDialog(null);
     setLocalUploadConflictRenameValue('');
     setLocalUploadConflictError(null);
   }, [contentView]);
-
-  useEffect(() => {
-    let mounted = true;
-
-    const unsubscribePromise = listen<OutputPayload>('ssh-output', (event) => {
-      if (!mounted || event.payload.stream !== 'status') {
-        return;
-      }
-
-      setSessionTabs((previous) =>
-        previous.map((tab) => {
-          if (!tab.sessionId || tab.sessionId !== event.payload.session_id) {
-            return tab;
-          }
-
-          if (
-            event.payload.data.includes('disconnected') ||
-            event.payload.data.includes('remote session closed')
-          ) {
-            return {
-              ...tab,
-              status: 'closed',
-              statusMessage: '连接已关闭'
-            };
-          }
-
-          if (event.payload.data.includes('connected to')) {
-            return {
-              ...tab,
-              statusMessage: '连接成功'
-            };
-          }
-
-          return tab;
-        })
-      );
-    });
-
-    return () => {
-      mounted = false;
-      void unsubscribePromise.then((unlisten) => unlisten());
-    };
-  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -384,85 +319,6 @@ export function App() {
     };
   }, [localTransferManager.applyProgress, sftpTransferManager.applyProgress]);
 
-  async function refreshProfiles() {
-    setProfilesBusy(true);
-    setProfileMessage(null);
-
-    try {
-      const nextProfiles = await invoke<ConnectionProfile[]>('list_connection_profiles');
-      setProfiles(nextProfiles);
-    } catch (invokeError) {
-      setProfileMessage(formatInvokeError(invokeError));
-    } finally {
-      setProfilesBusy(false);
-    }
-  }
-
-  async function loadLocalDir(
-    targetPath?: string,
-    options?: {
-      silent?: boolean;
-      background?: boolean;
-    }
-  ) {
-    const silent = options?.silent ?? false;
-    const background = options?.background ?? false;
-    const normalizedInput = targetPath?.trim();
-    const request: LocalListRequest = normalizedInput ? { path: normalizedInput } : {};
-
-    if (!background) {
-      setLocalBusy(true);
-    }
-    if (!silent) {
-      setLocalMessage('正在读取本地目录...');
-    }
-
-    try {
-      const result = await invoke<LocalListResponse>('list_local_dir', { request });
-      setLocalEntries(result.entries);
-      setLocalPath(result.path);
-      setLocalPathInput(result.path);
-      setLocalParentPath(result.parent_path ?? null);
-      setLocalSelectedPath(null);
-      setLocalContextMenu(null);
-      if (!silent) {
-        setLocalMessage(`本地目录读取成功，共 ${result.entries.length} 项`);
-      }
-    } catch (invokeError) {
-      setLocalMessage(formatInvokeError(invokeError));
-    } finally {
-      if (!background) {
-        setLocalBusy(false);
-      }
-    }
-  }
-
-  async function onLocalOpenPath() {
-    await loadLocalDir(localPathInput);
-  }
-
-  async function onLocalGoParent() {
-    if (!localParentPath) {
-      return;
-    }
-    await loadLocalDir(localParentPath);
-  }
-
-  async function onLocalEnterDir(entry: LocalFsEntry) {
-    if (!entry.is_dir) {
-      return;
-    }
-    await loadLocalDir(entry.path);
-  }
-
-  function closeLocalActionDialog() {
-    if (localBusy) {
-      return;
-    }
-    setLocalActionDialog(null);
-    setLocalActionError(null);
-  }
-
   function closeLocalUploadConflictDialog() {
     if (localBusy) {
       return;
@@ -473,108 +329,6 @@ export function App() {
     setLocalUploadConflictError(null);
     if (fromSystemQueue) {
       systemDropUploadQueue.continueSystemQueue();
-    }
-  }
-
-  function updateLocalActionValue(value: string) {
-    setLocalActionError(null);
-    setLocalActionDialog((current) => {
-      if (!current || current.kind === 'delete') {
-        return current;
-      }
-      return {
-        ...current,
-        value
-      };
-    });
-  }
-
-  function openLocalContextMenuAt(x: number, y: number, entry: LocalFsEntry | null) {
-    setSftpContextMenu(null);
-    setLocalActionDialog(null);
-    setLocalUploadConflictDialog(null);
-    setLocalUploadConflictRenameValue('');
-    setLocalUploadConflictError(null);
-    setLocalActionError(null);
-    setLocalContextMenu({ x, y, entry });
-  }
-
-  async function onLocalRenameEntry(entry: LocalFsEntry, newName: string) {
-    const trimmedName = newName.trim();
-    if (!trimmedName) {
-      setLocalActionError('名称不能为空');
-      return;
-    }
-
-    const request: LocalRenameRequest = {
-      path: entry.path,
-      new_name: trimmedName
-    };
-
-    setLocalBusy(true);
-    setLocalActionError(null);
-    setLocalMessage(`正在重命名：${entry.name}`);
-
-    try {
-      await invoke('local_rename_entry', { request });
-      setLocalActionDialog(null);
-      setLocalSelectedPath(null);
-      setLocalBusy(false);
-      await loadLocalDir(localPath);
-      setLocalMessage(`已重命名为：${trimmedName}`);
-    } catch (invokeError) {
-      setLocalActionError(formatInvokeError(invokeError));
-      setLocalBusy(false);
-    }
-  }
-
-  async function onLocalDeleteEntry(entry: LocalFsEntry) {
-    const request: LocalDeleteRequest = {
-      path: entry.path
-    };
-
-    setLocalBusy(true);
-    setLocalActionError(null);
-    setLocalMessage(`正在删除：${entry.path}`);
-
-    try {
-      await invoke('local_delete_entry', { request });
-      setLocalActionDialog(null);
-      setLocalSelectedPath(null);
-      setLocalBusy(false);
-      await loadLocalDir(localPath);
-      setLocalMessage(`已删除：${entry.name}`);
-    } catch (invokeError) {
-      setLocalActionError(formatInvokeError(invokeError));
-      setLocalBusy(false);
-    }
-  }
-
-  async function onLocalCreateDir(parentPath: string, name: string) {
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      setLocalActionError('文件夹名称不能为空');
-      return;
-    }
-
-    const request: LocalCreateDirRequest = {
-      parent_path: parentPath,
-      name: trimmedName
-    };
-
-    setLocalBusy(true);
-    setLocalActionError(null);
-    setLocalMessage(`正在创建文件夹：${trimmedName}`);
-
-    try {
-      await invoke('local_create_dir', { request });
-      setLocalActionDialog(null);
-      setLocalBusy(false);
-      await loadLocalDir(localPath);
-      setLocalMessage(`已创建文件夹：${trimmedName}`);
-    } catch (invokeError) {
-      setLocalActionError(formatInvokeError(invokeError));
-      setLocalBusy(false);
     }
   }
 
@@ -784,76 +538,6 @@ export function App() {
     }
   }
 
-  async function submitLocalActionDialog() {
-    if (!localActionDialog) {
-      return;
-    }
-
-    if (localActionDialog.kind === 'rename') {
-      await onLocalRenameEntry(localActionDialog.entry, localActionDialog.value);
-      return;
-    }
-
-    if (localActionDialog.kind === 'create_dir') {
-      await onLocalCreateDir(localActionDialog.parentPath, localActionDialog.value);
-      return;
-    }
-
-    await onLocalDeleteEntry(localActionDialog.entry);
-  }
-
-  async function loadSftpDir(
-    profile: ConnectionProfile,
-    targetPath: string,
-    options?: {
-      silent?: boolean;
-      background?: boolean;
-    }
-  ) {
-    const silent = options?.silent ?? false;
-    const background = options?.background ?? false;
-    const auth = buildAuthFromProfile(profile);
-    if (!auth) {
-      setSftpMessage(`服务器 ${profile.name} 缺少可用凭据，请先编辑并保存。`);
-      return;
-    }
-
-    const normalizedPath = normalizeRemotePath(targetPath);
-    const request: SftpListRequest = {
-      host: profile.host,
-      port: profile.port,
-      username: profile.username,
-      auth,
-      path: normalizedPath
-    };
-
-    if (!background) {
-      setSftpBusy(true);
-    }
-    if (!silent) {
-      setSftpMessage(`正在读取 ${profile.name} 的远程目录：${normalizedPath}`);
-    }
-
-    try {
-      const entries = await invoke<SftpEntry[]>('sftp_list_dir', { request });
-      setSftpEntries(entries);
-      setSftpPath(normalizedPath);
-      setSftpPathInput(normalizedPath);
-      setConnectedSftpProfileId(profile.id);
-      setSftpSelectedPath(null);
-      setSftpContextMenu(null);
-      if (!silent) {
-        setSftpMessage(`目录读取成功，共 ${entries.length} 项`);
-      }
-    } catch (invokeError) {
-      setSftpMessage(formatInvokeError(invokeError));
-    } finally {
-      if (!background) {
-        setSftpBusy(false);
-      }
-    }
-  }
-
   async function openSftpView() {
     setContentView('sftp');
     if (!localPath) {
@@ -867,51 +551,8 @@ export function App() {
     }
 
     if (!selectedSftpProfileId) {
-      setSelectedSftpProfileId(profiles[0].id);
+      onSelectSftpProfile(profiles[0].id);
     }
-  }
-
-  function onSelectSftpProfile(profileId: string) {
-    setSelectedSftpProfileId(profileId);
-    if (connectedSftpProfileId && connectedSftpProfileId !== profileId) {
-      systemDropUploadQueue.resetSystemQueue();
-      setConnectedSftpProfileId('');
-      setSftpEntries([]);
-      setSftpPath('/root');
-      setSftpPathInput('/root');
-      setSftpMessage('已切换服务器，请点击“连接”加载远程目录。');
-    }
-  }
-
-  async function onConnectSftpHost() {
-    if (!selectedSftpProfile) {
-      setSftpMessage('请先选择服务器。');
-      return;
-    }
-    await loadSftpDir(selectedSftpProfile, '/root');
-  }
-
-  async function onOpenSftpPath() {
-    if (!connectedSftpProfile) {
-      setSftpMessage('请先连接服务器。');
-      return;
-    }
-    await loadSftpDir(connectedSftpProfile, sftpPathInput);
-  }
-
-  async function onSftpGoParent() {
-    if (!connectedSftpProfile) {
-      setSftpMessage('请先连接服务器。');
-      return;
-    }
-    await loadSftpDir(connectedSftpProfile, parentRemotePath(sftpPath));
-  }
-
-  async function onSftpEnterDir(entry: SftpEntry) {
-    if (!connectedSftpProfile || !entry.is_dir) {
-      return;
-    }
-    await loadSftpDir(connectedSftpProfile, entry.path);
   }
 
   async function onSftpDownload(entry: SftpEntry) {
@@ -985,34 +626,6 @@ export function App() {
       profile: connectedSftpProfile,
       auth
     };
-  }
-
-  function closeSftpActionDialog() {
-    if (sftpBusy) {
-      return;
-    }
-    setSftpActionDialog(null);
-    setSftpActionError(null);
-  }
-
-  function updateSftpActionValue(value: string) {
-    setSftpActionError(null);
-    setSftpActionDialog((current) => {
-      if (!current || current.kind === 'delete') {
-        return current;
-      }
-      return {
-        ...current,
-        value
-      };
-    });
-  }
-
-  function openSftpContextMenuAt(x: number, y: number, entry: SftpEntry | null) {
-    setLocalContextMenu(null);
-    setSftpActionDialog(null);
-    setSftpActionError(null);
-    setSftpContextMenu({ x, y, entry });
   }
 
   async function onSftpCopyToTarget(entry: SftpEntry) {
@@ -1106,172 +719,6 @@ export function App() {
     }
   }
 
-  async function onSftpRenameEntry(entry: SftpEntry, newName: string) {
-    const context = getConnectedSftpContext();
-    if (!context) {
-      return;
-    }
-
-    const trimmedName = newName.trim();
-    if (!trimmedName) {
-      setSftpActionError('名称不能为空');
-      return;
-    }
-
-    const request: SftpRenameRequest = {
-      host: context.profile.host,
-      port: context.profile.port,
-      username: context.profile.username,
-      auth: context.auth,
-      path: entry.path,
-      new_name: trimmedName
-    };
-
-    setSftpBusy(true);
-    setSftpActionError(null);
-    setSftpMessage(`正在重命名：${entry.name}`);
-
-    try {
-      await invoke('sftp_rename_entry', { request });
-      setSftpActionDialog(null);
-      setSftpSelectedPath(null);
-      setSftpBusy(false);
-      await loadSftpDir(context.profile, sftpPath);
-      setSftpMessage(`已重命名为：${trimmedName}`);
-    } catch (invokeError) {
-      setSftpActionError(formatInvokeError(invokeError));
-      setSftpBusy(false);
-    }
-  }
-
-  async function onSftpDeleteEntry(entry: SftpEntry) {
-    const context = getConnectedSftpContext();
-    if (!context) {
-      return;
-    }
-
-    const request: SftpDeleteRequest = {
-      host: context.profile.host,
-      port: context.profile.port,
-      username: context.profile.username,
-      auth: context.auth,
-      path: entry.path
-    };
-
-    setSftpBusy(true);
-    setSftpActionError(null);
-    setSftpMessage(`正在删除：${entry.path}`);
-
-    try {
-      await invoke('sftp_delete_entry', { request });
-      setSftpActionDialog(null);
-      setSftpSelectedPath(null);
-      setSftpBusy(false);
-      await loadSftpDir(context.profile, sftpPath);
-      setSftpMessage(`已删除：${entry.name}`);
-    } catch (invokeError) {
-      setSftpActionError(formatInvokeError(invokeError));
-      setSftpBusy(false);
-    }
-  }
-
-  async function onSftpCreateDir(parentPath: string, name: string) {
-    const context = getConnectedSftpContext();
-    if (!context) {
-      return;
-    }
-
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      setSftpActionError('文件夹名称不能为空');
-      return;
-    }
-
-    const request: SftpCreateDirRequest = {
-      host: context.profile.host,
-      port: context.profile.port,
-      username: context.profile.username,
-      auth: context.auth,
-      parent_path: parentPath,
-      name: trimmedName
-    };
-
-    setSftpBusy(true);
-    setSftpActionError(null);
-    setSftpMessage(`正在创建文件夹：${trimmedName}`);
-
-    try {
-      await invoke('sftp_create_dir', { request });
-      setSftpActionDialog(null);
-      setSftpBusy(false);
-      await loadSftpDir(context.profile, sftpPath);
-      setSftpMessage(`已创建文件夹：${trimmedName}`);
-    } catch (invokeError) {
-      setSftpActionError(formatInvokeError(invokeError));
-      setSftpBusy(false);
-    }
-  }
-
-  async function onSftpSetPermissions(entry: SftpEntry, value: string) {
-    const context = getConnectedSftpContext();
-    if (!context) {
-      return;
-    }
-
-    const permissions = parsePermissionInput(value);
-    if (permissions === null) {
-      setSftpActionError('请输入 3-4 位八进制权限，例如 755 或 0755');
-      return;
-    }
-
-    const request: SftpSetPermissionsRequest = {
-      host: context.profile.host,
-      port: context.profile.port,
-      username: context.profile.username,
-      auth: context.auth,
-      path: entry.path,
-      permissions
-    };
-
-    setSftpBusy(true);
-    setSftpActionError(null);
-    setSftpMessage(`正在更新权限：${entry.path}`);
-
-    try {
-      await invoke('sftp_set_permissions', { request });
-      setSftpActionDialog(null);
-      setSftpBusy(false);
-      await loadSftpDir(context.profile, sftpPath);
-      setSftpMessage(`权限已更新为 ${value.trim()}`);
-    } catch (invokeError) {
-      setSftpActionError(formatInvokeError(invokeError));
-      setSftpBusy(false);
-    }
-  }
-
-  async function submitSftpActionDialog() {
-    if (!sftpActionDialog) {
-      return;
-    }
-
-    if (sftpActionDialog.kind === 'rename') {
-      await onSftpRenameEntry(sftpActionDialog.entry, sftpActionDialog.value);
-      return;
-    }
-
-    if (sftpActionDialog.kind === 'create_dir') {
-      await onSftpCreateDir(sftpActionDialog.parentPath, sftpActionDialog.value);
-      return;
-    }
-
-    if (sftpActionDialog.kind === 'permissions') {
-      await onSftpSetPermissions(sftpActionDialog.entry, sftpActionDialog.value);
-      return;
-    }
-
-    await onSftpDeleteEntry(sftpActionDialog.entry);
-  }
-
   function onDisconnectSftpHost() {
     if (!connectedSftpProfile) {
       return;
@@ -1298,229 +745,6 @@ export function App() {
     sftpTransferManager.clearCompleted();
   }
 
-  function openCreateEditor() {
-    setEditorMode('create');
-    setEditor(createEmptyEditor());
-    setTestState({ phase: 'idle', message: '' });
-    setIsEditorOpen(true);
-  }
-
-  function openEditEditor(profile: ConnectionProfile) {
-    setEditorMode('edit');
-    setEditor({
-      id: profile.id,
-      name: profile.name,
-      host: profile.host,
-      port: profile.port,
-      username: profile.username,
-      authKind: profile.auth_kind,
-      password: profile.password ?? '',
-      privateKey: profile.private_key ?? '',
-      passphrase: profile.passphrase ?? ''
-    });
-    setTestState({ phase: 'idle', message: '' });
-    setIsEditorOpen(true);
-  }
-
-  function closeEditor() {
-    if (editorBusy) {
-      return;
-    }
-    setIsEditorOpen(false);
-  }
-
-  function openQuickConnect() {
-    setIsQuickConnectOpen(true);
-  }
-
-  function closeQuickConnect() {
-    setIsQuickConnectOpen(false);
-  }
-
-  async function onSaveEditor() {
-    if (editorValidation) {
-      setTestState({ phase: 'error', message: editorValidation });
-      return;
-    }
-
-    setEditorBusy(true);
-
-    const request: UpsertConnectionProfileRequest = {
-      id: editor.id,
-      name: editor.name.trim(),
-      host: editor.host.trim(),
-      port: editor.port,
-      username: editor.username.trim(),
-      auth_kind: editor.authKind,
-      password: editor.authKind === 'password' ? editor.password : undefined,
-      private_key: editor.authKind === 'private_key' ? editor.privateKey : undefined,
-      passphrase: editor.authKind === 'private_key' && editor.passphrase ? editor.passphrase : undefined
-    };
-
-    try {
-      const saved = await invoke<ConnectionProfile>('upsert_connection_profile', { request });
-      setProfileMessage(`已保存：${saved.name}`);
-      setIsEditorOpen(false);
-      await refreshProfiles();
-    } catch (invokeError) {
-      setTestState({ phase: 'error', message: formatInvokeError(invokeError) });
-    } finally {
-      setEditorBusy(false);
-    }
-  }
-
-  async function onTestConnection() {
-    if (editorValidation) {
-      setTestState({ phase: 'error', message: editorValidation });
-      return;
-    }
-
-    const auth = buildAuthFromEditor(editor);
-
-    const request: ConnectRequest = {
-      host: editor.host.trim(),
-      port: editor.port,
-      username: editor.username.trim(),
-      auth
-    };
-
-    setTestState({ phase: 'testing', message: '正在测试连接...' });
-
-    try {
-      await invoke<string>('test_ssh_connection', { request });
-      setTestState({ phase: 'success', message: '连接测试成功' });
-    } catch (invokeError) {
-      setTestState({ phase: 'error', message: formatInvokeError(invokeError) });
-    }
-  }
-
-  async function onDeleteProfile(profile: ConnectionProfile) {
-    setProfilesBusy(true);
-    setProfileMessage(null);
-
-    const request: DeleteConnectionProfileRequest = { id: profile.id };
-
-    try {
-      await invoke('delete_connection_profile', { request });
-      setProfileMessage(`已删除：${profile.name}`);
-      await refreshProfiles();
-    } catch (invokeError) {
-      setProfileMessage(formatInvokeError(invokeError));
-    } finally {
-      setProfilesBusy(false);
-    }
-  }
-
-  async function onConnectProfile(profile: ConnectionProfile) {
-    const auth = buildAuthFromProfile(profile);
-    if (!auth) {
-      setProfileMessage(`服务器 ${profile.name} 缺少可用凭据，请先编辑并保存。`);
-      return;
-    }
-
-    const tabId = createClientTabId();
-    const newTab: SessionTab = {
-      id: tabId,
-      kind: 'ssh',
-      profileId: profile.id,
-      name: profile.name,
-      host: profile.host,
-      port: profile.port,
-      username: profile.username,
-      status: 'connecting',
-      statusMessage: '正在建立 SSH 连接...'
-    };
-
-    setSessionTabs((previous) => [...previous, newTab]);
-    setActiveTabId(tabId);
-    setContentView('workspace');
-
-    const request: ConnectRequest = {
-      host: profile.host,
-      port: profile.port,
-      username: profile.username,
-      auth
-    };
-
-    try {
-      const session = await invoke<SessionSummary>('connect_ssh', { request });
-      setSessionTabs((previous) =>
-        previous.map((tab) =>
-          tab.id === tabId
-            ? {
-                ...tab,
-                sessionId: session.session_id,
-                status: 'connected',
-                statusMessage: '连接成功'
-              }
-            : tab
-        )
-      );
-    } catch {
-      setSessionTabs((previous) =>
-        previous.map((tab) =>
-          tab.id === tabId
-            ? {
-                ...tab,
-                status: 'error',
-                statusMessage: '连接失败'
-              }
-            : tab
-        )
-      );
-    }
-  }
-
-  async function onConnectLocalTerminal() {
-    const tabId = createClientTabId();
-    const newTab: SessionTab = {
-      id: tabId,
-      kind: 'local',
-      name: '本地终端',
-      host: 'localhost',
-      port: 0,
-      username: 'local',
-      status: 'connecting',
-      statusMessage: '正在启动本地终端...'
-    };
-
-    setSessionTabs((previous) => [...previous, newTab]);
-    setActiveTabId(tabId);
-    setContentView('workspace');
-
-    const request: LocalConnectRequest = {};
-
-    try {
-      const session = await invoke<SessionSummary>('connect_local_terminal', { request });
-      setSessionTabs((previous) =>
-        previous.map((tab) =>
-          tab.id === tabId
-            ? {
-                ...tab,
-                sessionId: session.session_id,
-                status: 'connected',
-                statusMessage: '本地终端已启动',
-                host: session.host,
-                username: session.username
-              }
-            : tab
-        )
-      );
-    } catch (invokeError) {
-      setSessionTabs((previous) =>
-        previous.map((tab) =>
-          tab.id === tabId
-            ? {
-                ...tab,
-                status: 'error',
-                statusMessage: formatInvokeError(invokeError)
-              }
-            : tab
-        )
-      );
-    }
-  }
-
   async function onQuickConnectProfile(profile: ConnectionProfile) {
     closeQuickConnect();
     await onConnectProfile(profile);
@@ -1529,65 +753,6 @@ export function App() {
   async function onQuickConnectLocal() {
     closeQuickConnect();
     await onConnectLocalTerminal();
-  }
-
-  async function closeTab(tabId: string) {
-    const target = sessionTabs.find((tab) => tab.id === tabId);
-    if (!target) {
-      return;
-    }
-
-    if (target.sessionId) {
-      try {
-        await invoke('disconnect_ssh', {
-          request: {
-            session_id: target.sessionId
-          }
-        });
-      } catch {
-        // Ignore close errors.
-      }
-    }
-
-    const nextTabs = sessionTabs.filter((tab) => tab.id !== tabId);
-    setSessionTabs(nextTabs);
-
-    if (nextTabs.length === 0) {
-      setActiveTabId(null);
-      setContentView('servers');
-      return;
-    }
-
-    if (activeTabId === tabId) {
-      setActiveTabId(nextTabs[nextTabs.length - 1].id);
-    }
-  }
-
-  async function onDisconnectActiveTab() {
-    if (!activeTab) {
-      return;
-    }
-    await closeTab(activeTab.id);
-  }
-
-  async function retryActiveTab() {
-    if (!activeTab) {
-      return;
-    }
-
-    if (activeTab.kind === 'local') {
-      await closeTab(activeTab.id);
-      await onConnectLocalTerminal();
-      return;
-    }
-
-    const profile = profiles.find((item) => item.id === activeTab.profileId);
-    if (!profile) {
-      return;
-    }
-
-    await closeTab(activeTab.id);
-    await onConnectProfile(profile);
   }
 
   const onHeaderMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
@@ -1609,8 +774,6 @@ export function App() {
   }, []);
 
   function renderBody() {
-    const connectedCount = sessionTabs.filter((item) => item.status === 'connected').length;
-
     return (
       <>
         <div className={contentView === 'servers' ? 'view-page' : 'view-page hidden'}>
@@ -1733,10 +896,7 @@ export function App() {
               key={tab.id}
               type="button"
               className={activeTabId === tab.id ? 'session-tab active' : 'session-tab'}
-              onClick={() => {
-                setActiveTabId(tab.id);
-                setContentView('workspace');
-              }}
+              onClick={() => openTab(tab.id)}
             >
               <span className={`dot ${tab.status}`} />
               <span className="tab-title">{tab.name}</span>
