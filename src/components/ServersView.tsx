@@ -1499,7 +1499,7 @@ export function ServersView({
                       </header>
 
                       {systemdRemoteServices.length === 0 ? (
-                        <p className="systemd-service-meta">当前服务器未读取到可导入的服务。</p>
+                        <p className="systemd-service-meta">未发现可导入的自建服务（仅展示常见用户自建目录下的服务）。</p>
                       ) : (
                         <>
                           <label className="field-label">

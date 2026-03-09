@@ -740,8 +740,29 @@ fn query_remote_systemd_services(
     use_sudo: bool,
 ) -> Result<Vec<RemoteSystemdServiceItem>, String> {
     let prefix = systemctl_prefix(scope, use_sudo);
+    let custom_dir = match scope {
+        SystemdScope::System => "/etc/systemd/system",
+        SystemdScope::User => "$HOME/.config/systemd/user",
+    };
     let script = format!(
-        "set -euo pipefail\n{prefix} list-unit-files --type=service --no-legend --no-pager"
+        r#"set -euo pipefail
+list_output="$({prefix} list-unit-files --type=service --no-legend --no-pager 2>/dev/null || true)"
+if [ ! -d "{custom_dir}" ]; then
+  exit 0
+fi
+find "{custom_dir}" -maxdepth 1 \( -type f -o -type l \) -name '*.service' -print 2>/dev/null | while read -r path; do
+  [ -z "$path" ] && continue
+  unit="$(basename "$path")"
+  case "$unit" in
+    *@.service) continue ;;
+  esac
+  state="$(printf '%s\n' "$list_output" | awk -v unit="$unit" '$1==unit {{ print $2; exit }}')"
+  if [ -z "$state" ]; then
+    state="unknown"
+  fi
+  printf "%s\t%s\n" "$unit" "$state"
+done
+"#
     );
     let (stdout, stderr, exit_status) = run_remote_script(session, &script)?;
     if exit_status != 0 {
