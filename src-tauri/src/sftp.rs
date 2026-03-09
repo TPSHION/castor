@@ -28,6 +28,14 @@ pub struct SftpListRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct SftpConnectRequest {
+  pub host: String,
+  pub port: Option<u16>,
+  pub username: String,
+  pub auth: AuthConfig
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SftpDownloadRequest {
   pub host: String,
   pub port: Option<u16>,
@@ -423,6 +431,23 @@ pub fn cancel_transfer(request: CancelSftpTransferRequest) -> Result<(), String>
   } else {
     Err("目标下载任务不存在或已结束".to_string())
   }
+}
+
+pub fn connect_session(request: SftpConnectRequest) -> Result<(), String> {
+  let connection_key =
+    build_sftp_connection_key(&request.host, request.port, &request.username, &request.auth);
+  let _connection = get_or_create_sftp_connection(&connection_key, &request.auth)?;
+  Ok(())
+}
+
+pub fn disconnect_session(request: SftpConnectRequest) -> Result<(), String> {
+  let connection_key =
+    build_sftp_connection_key(&request.host, request.port, &request.username, &request.auth);
+  let mut pool = sftp_connection_pool()
+    .lock()
+    .map_err(|_| "sftp connection pool lock poisoned".to_string())?;
+  pool.remove(&connection_key);
+  Ok(())
 }
 
 pub fn list_dir(request: SftpListRequest) -> Result<Vec<SftpEntry>, String> {

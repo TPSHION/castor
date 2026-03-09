@@ -12,10 +12,12 @@ use crate::profiles::{
 };
 use crate::sftp::{
   cancel_transfer as cancel_sftp_transfer_impl,
+  connect_session as sftp_connect_impl,
   create_dir as sftp_create_dir_impl,
   delete_entry as sftp_delete_entry_impl,
+  disconnect_session as sftp_disconnect_impl,
   download_file as sftp_download_file_impl, list_dir as sftp_list_dir_impl, SftpDownloadRequest,
-  SftpDownloadResult, SftpEntry, SftpListRequest, SftpCreateDirRequest, SftpDeleteRequest,
+  SftpDownloadResult, SftpEntry, SftpListRequest, SftpConnectRequest, SftpCreateDirRequest, SftpDeleteRequest,
   CancelSftpTransferRequest,
   SftpRenameRequest, SftpSetPermissionsRequest, SftpUploadRequest, SftpUploadResult,
   rename_entry as sftp_rename_entry_impl, set_permissions as sftp_set_permissions_impl,
@@ -104,6 +106,18 @@ pub async fn sftp_list_dir(request: SftpListRequest) -> Result<Vec<SftpEntry>, S
   tauri::async_runtime::spawn_blocking(move || sftp_list_dir_impl(request))
     .await
     .map_err(|err| format!("failed to join sftp list task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn sftp_connect(request: SftpConnectRequest) -> Result<(), String> {
+  tauri::async_runtime::spawn_blocking(move || sftp_connect_impl(request))
+    .await
+    .map_err(|err| format!("failed to join sftp connect task: {err}"))?
+}
+
+#[tauri::command]
+pub fn sftp_disconnect(request: SftpConnectRequest) -> Result<(), String> {
+  sftp_disconnect_impl(request)
 }
 
 #[tauri::command]

@@ -119,6 +119,7 @@ export function App() {
     loadSftpDir,
     onSelectSftpProfile: onSelectSftpProfileCore,
     onConnectSftpHost,
+    disconnectSftpHostSession,
     onOpenSftpPath,
     onSftpGoParent,
     onSftpEnterDir,
@@ -277,10 +278,11 @@ export function App() {
     }
   }
 
-  function onDisconnectSftpHost() {
+  async function onDisconnectSftpHost() {
     if (!connectedSftpProfile) {
       return;
     }
+    await disconnectSftpHostSession(connectedSftpProfile);
     resetSystemDropQueue();
     const name = connectedSftpProfile.name;
     setConnectedSftpProfileId('');

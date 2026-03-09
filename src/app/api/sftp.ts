@@ -16,6 +16,16 @@ export type CancelSftpTransferRequest = {
   transfer_id: string;
 };
 
+export type SftpConnectionRequest = Pick<SftpListRequest, 'host' | 'port' | 'username' | 'auth'>;
+
+export function sftpConnect(request: SftpConnectionRequest) {
+  return invokeTauriWithRequest<void, SftpConnectionRequest>('sftp_connect', request);
+}
+
+export function sftpDisconnect(request: SftpConnectionRequest) {
+  return invokeTauriWithRequest<void, SftpConnectionRequest>('sftp_disconnect', request);
+}
+
 export function sftpListDir(request: SftpListRequest) {
   return invokeTauriWithRequest<SftpEntry[], SftpListRequest>('sftp_list_dir', request);
 }

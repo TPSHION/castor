@@ -9,7 +9,15 @@ import type {
   SftpRenameRequest,
   SftpSetPermissionsRequest
 } from '../../types';
-import { sftpCreateDir, sftpDeleteEntry, sftpListDir, sftpRenameEntry, sftpSetPermissions } from '../api/sftp';
+import {
+  sftpConnect,
+  sftpCreateDir,
+  sftpDeleteEntry,
+  sftpDisconnect,
+  sftpListDir,
+  sftpRenameEntry,
+  sftpSetPermissions
+} from '../api/sftp';
 import type { SftpActionDialogState, SftpContextMenuState } from '../types';
 import { buildAuthFromProfile, formatInvokeError, normalizeRemotePath, parentRemotePath, parsePermissionInput } from '../helpers';
 
@@ -46,6 +54,23 @@ export function useSftpPane(profiles: ConnectionProfile[]) {
   }, [sftpEntries, sftpSelectedPath]);
 
   const closeSftpContextMenu = useCallback(() => setSftpContextMenu(null), []);
+
+  const buildSftpConnectionRequest = useCallback(
+    (profile: ConnectionProfile): { host: string; port?: number; username: string; auth: AuthConfig } | null => {
+      const auth = buildAuthFromProfile(profile);
+      if (!auth) {
+        setSftpMessage(`服务器 ${profile.name} 缺少可用凭据，请先编辑并保存。`);
+        return null;
+      }
+      return {
+        host: profile.host,
+        port: profile.port,
+        username: profile.username,
+        auth
+      };
+    },
+    []
+  );
 
   const loadSftpDir = useCallback(
     async (
@@ -140,8 +165,37 @@ export function useSftpPane(profiles: ConnectionProfile[]) {
       setSftpMessage('请先选择服务器。');
       return;
     }
+    const request = buildSftpConnectionRequest(selectedSftpProfile);
+    if (!request) {
+      return;
+    }
+    setSftpBusy(true);
+    setSftpMessage(`正在连接 ${selectedSftpProfile.name}...`);
+    try {
+      await sftpConnect(request);
+    } catch (invokeError) {
+      setSftpBusy(false);
+      setSftpMessage(formatInvokeError(invokeError));
+      return;
+    }
+    setSftpBusy(false);
     await loadSftpDir(selectedSftpProfile, '/root');
-  }, [loadSftpDir, selectedSftpProfile]);
+  }, [buildSftpConnectionRequest, loadSftpDir, selectedSftpProfile]);
+
+  const disconnectSftpHostSession = useCallback(
+    async (profile: ConnectionProfile) => {
+      const request = buildSftpConnectionRequest(profile);
+      if (!request) {
+        return;
+      }
+      try {
+        await sftpDisconnect(request);
+      } catch {
+        // Ignore disconnect errors and let UI state cleanup continue.
+      }
+    },
+    [buildSftpConnectionRequest]
+  );
 
   const onOpenSftpPath = useCallback(async () => {
     if (!connectedSftpProfile) {
@@ -418,6 +472,7 @@ export function useSftpPane(profiles: ConnectionProfile[]) {
     loadSftpDir,
     onSelectSftpProfile,
     onConnectSftpHost,
+    disconnectSftpHostSession,
     onOpenSftpPath,
     onSftpGoParent,
     onSftpEnterDir,
