@@ -216,3 +216,99 @@ export type UpsertConnectionProfileRequest = {
 export type DeleteConnectionProfileRequest = {
   id: string;
 };
+
+export type SystemdScope = 'system' | 'user';
+
+export type DeploySystemdServiceRequest = {
+  profile_id: string;
+  service_name: string;
+  description?: string;
+  working_dir: string;
+  exec_start: string;
+  exec_stop?: string;
+  service_user?: string;
+  environment?: string[];
+  enable_on_boot?: boolean;
+  scope?: SystemdScope;
+  use_sudo?: boolean;
+};
+
+export type DeploySystemdServiceResult = {
+  host: string;
+  service_name: string;
+  scope: SystemdScope;
+  unit_path: string;
+  stdout: string;
+  stderr: string;
+  exit_status: number;
+};
+
+export type SystemdDeployService = {
+  id: string;
+  profile_id: string;
+  name: string;
+  service_name: string;
+  description?: string;
+  working_dir: string;
+  exec_start: string;
+  exec_stop?: string;
+  service_user?: string;
+  environment?: string[];
+  enable_on_boot: boolean;
+  scope: SystemdScope;
+  use_sudo: boolean;
+  created_at: number;
+  updated_at: number;
+};
+
+export type UpsertSystemdDeployServiceRequest = {
+  id?: string;
+  profile_id: string;
+  name: string;
+  service_name: string;
+  description?: string;
+  working_dir: string;
+  exec_start: string;
+  exec_stop?: string;
+  service_user?: string;
+  environment?: string[];
+  enable_on_boot?: boolean;
+  scope?: SystemdScope;
+  use_sudo?: boolean;
+};
+
+export type DeleteSystemdDeployServiceRequest = {
+  id: string;
+};
+
+export type ApplySystemdDeployServiceRequest = {
+  id: string;
+};
+
+export type GetSystemdDeployServiceStatusRequest = {
+  id: string;
+};
+
+export type SystemdControlAction = 'start' | 'stop' | 'restart';
+
+export type ControlSystemdDeployServiceRequest = {
+  id: string;
+  action: SystemdControlAction;
+};
+
+export type SystemdServiceStatus = {
+  active_state: string;
+  sub_state: string;
+  unit_file_state: string;
+  summary: 'running' | 'stopped' | 'failed' | 'unknown' | string;
+  checked_at: number;
+};
+
+export type SystemdServiceActionResult = {
+  id: string;
+  action: SystemdControlAction;
+  stdout: string;
+  stderr: string;
+  exit_status: number;
+  status: SystemdServiceStatus;
+};
