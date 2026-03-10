@@ -61,4 +61,5 @@ pnpm run build
 - Connection profiles are stored in app config as `connection_profiles.json`.
 - Sensitive secrets (password/private key/passphrase) are currently persisted in plain text in that file.
 - See implementation summary: `docs/v1.0.0-implementation-summary.md`
+- See implementation summary: `docs/v1.2.0-implementation-summary.md`
 - See developer module map: `docs/developer-module-quick-reference.md`

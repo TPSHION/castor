@@ -17,6 +17,10 @@
 | SSH 连接与会话 | `src/App.tsx`, `src/components/WorkspaceView.tsx`, `src/components/TerminalView.tsx` | `src-tauri/src/ssh/mod.rs` | `connect_ssh`, `disconnect_ssh`, `send_ssh_input`, `resize_ssh`, `ssh-output` |
 | 本地终端 | `src/App.tsx`, `src/components/TerminalView.tsx` | `src-tauri/src/ssh/mod.rs` | `connect_local_terminal`, `disconnect_ssh`, `ssh-output` |
 | 服务器配置管理 | `src/components/ServersView.tsx`, `src/components/ServerEditorModal.tsx`, `src/components/QuickConnectModal.tsx` | `src-tauri/src/profiles.rs` | `list_connection_profiles`, `upsert_connection_profile`, `delete_connection_profile`, `test_ssh_connection` |
+| systemd 部署服务（列表/新增/编辑） | `src/components/ServersView.tsx`, `src/app/api/profiles.ts` | `src-tauri/src/deploy.rs` | `list_systemd_deploy_services`, `upsert_systemd_deploy_service`, `apply_systemd_deploy_service`, `delete_systemd_deploy_service` |
+| systemd 详情控制（状态/启停重启） | `src/components/ServersView.tsx`, `src/app/api/profiles.ts` | `src-tauri/src/deploy.rs` | `get_systemd_deploy_service_status`, `control_systemd_deploy_service` |
+| systemd 日志（查看/实时/全屏） | `src/components/ServersView.tsx`, `src/app/api/profiles.ts` | `src-tauri/src/deploy.rs` | `get_systemd_deploy_service_logs` |
+| 从已有 systemd 服务导入 | `src/components/ServersView.tsx`, `src/app/api/profiles.ts` | `src-tauri/src/deploy.rs` | `list_remote_systemd_services`, `get_remote_systemd_service_template` |
 | SFTP 列表/浏览 | `src/App.tsx`, `src/components/SftpView.tsx` | `src-tauri/src/sftp.rs` | `sftp_list_dir` |
 | 上传（含冲突策略） | `src/App.tsx`, `src/components/LocalUploadConflictDialog.tsx`, `src/app/hooks/useSystemDropUploadQueue.ts` | `src-tauri/src/sftp.rs` | `sftp_upload_path`, `cancel_sftp_transfer`, `sftp-transfer-progress` |
 | 下载 | `src/App.tsx`, `src/components/SftpView.tsx` | `src-tauri/src/sftp.rs` | `sftp_download_file`, `cancel_sftp_transfer`, `sftp-transfer-progress` |
@@ -35,6 +39,7 @@
 
 - `src-tauri/src/commands.rs`：对外命令路由层（thin wrapper）
 - `src-tauri/src/ssh/mod.rs`：SSH 会话与本地 PTY 生命周期、输入输出、resize、状态事件
+- `src-tauri/src/deploy.rs`：systemd 部署服务配置持久化、远端 apply/控制、日志查询、远端导入、连接池复用
 - `src-tauri/src/sftp.rs`：SFTP 目录操作、递归上传下载、冲突策略、权限、进度与取消
 - `src-tauri/src/localfs.rs`：本地目录浏览/重命名/删除/建目录
 - `src-tauri/src/profiles.rs`：配置文件持久化（`connection_profiles.json`）
@@ -44,8 +49,9 @@
 | 场景 | 优先改动文件 |
 | --- | --- |
 | 调整终端交互（输入/resize/状态） | `src/components/TerminalView.tsx`, `src-tauri/src/ssh/mod.rs` |
+| 调整 systemd 页面流程（列表/表单/详情） | `src/components/ServersView.tsx`, `src/styles/app.css`, `src/app/api/profiles.ts`, `src/types.ts` |
+| 调整 systemd 后端行为（部署/控制/日志/导入） | `src-tauri/src/deploy.rs`, `src-tauri/src/commands.rs`, `src-tauri/src/main.rs`, `src/types.ts` |
 | 调整上传下载进度显示 | `src/app/hooks/useTransferProgressManager.ts`, `src/components/TransferTasksPanelModal.tsx`, `src/App.tsx` |
 | 新增 SFTP 操作命令 | `src-tauri/src/sftp.rs`, `src-tauri/src/commands.rs`, `src/types.ts`, `src/App.tsx` |
 | 调整服务器配置字段 | `src/components/ServerEditorModal.tsx`, `src/types.ts`, `src-tauri/src/profiles.rs` |
 | 优化 SFTP 列表 UI 或交互 | `src/components/SftpView.tsx`, `src/styles/app.css`, `src/App.tsx` |
-
