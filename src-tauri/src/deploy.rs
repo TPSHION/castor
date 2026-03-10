@@ -79,6 +79,7 @@ pub struct UpsertSystemdDeployServiceRequest {
 #[derive(Debug, Deserialize)]
 pub struct DeleteSystemdDeployServiceRequest {
     pub id: String,
+    pub remove_remote: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -311,30 +312,33 @@ pub fn delete_systemd_deploy_service(
             .ok_or_else(|| format!("systemd deploy service {} not found", request.id.clone()))?
     };
 
-    let profile = find_profile(app, &removed.profile_id)?;
-    let service_file = service_file_name(&removed.service_name);
-    let remove_script = build_remove_script(&service_file, removed.scope, removed.use_sudo);
+    let remove_remote = request.remove_remote.unwrap_or(true);
+    if remove_remote {
+        let profile = find_profile(app, &removed.profile_id)?;
+        let service_file = service_file_name(&removed.service_name);
+        let remove_script = build_remove_script(&service_file, removed.scope, removed.use_sudo);
 
-    with_pooled_session(&profile, |session| {
-        let (stdout, stderr, exit_status) = run_remote_script(session, &remove_script)?;
-        if exit_status != 0 {
-            let detail = if stderr.trim().is_empty() {
-                stdout.trim()
-            } else {
-                stderr.trim()
-            };
-            return Err(format!(
-                "failed to remove {} (exit code {exit_status}): {}",
-                service_file,
-                if detail.is_empty() {
-                    "unknown error"
+        with_pooled_session(&profile, |session| {
+            let (stdout, stderr, exit_status) = run_remote_script(session, &remove_script)?;
+            if exit_status != 0 {
+                let detail = if stderr.trim().is_empty() {
+                    stdout.trim()
                 } else {
-                    detail
-                }
-            ));
-        }
-        Ok(())
-    })?;
+                    stderr.trim()
+                };
+                return Err(format!(
+                    "failed to remove {} (exit code {exit_status}): {}",
+                    service_file,
+                    if detail.is_empty() {
+                        "unknown error"
+                    } else {
+                        detail
+                    }
+                ));
+            }
+            Ok(())
+        })?;
+    }
 
     let _services_lock = systemd_services_store_lock()
         .lock()

@@ -1299,6 +1299,18 @@ button.danger {
   line-height: 1.45;
 }
 
+.systemd-confirm-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #cdd9ef;
+  font-size: 0.82rem;
+}
+
+.systemd-confirm-checkbox input[type='checkbox'] {
+  margin: 0;
+}
+
 .systemd-confirm-actions {
   justify-content: flex-end;
 }

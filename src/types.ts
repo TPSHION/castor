@@ -286,6 +286,7 @@ export type UpsertSystemdDeployServiceRequest = {
 
 export type DeleteSystemdDeployServiceRequest = {
   id: string;
+  remove_remote?: boolean;
 };
 
 export type ApplySystemdDeployServiceRequest = {

@@ -58,6 +58,7 @@ type SystemdDeleteDialogState = {
   id: string;
   name: string;
   from: 'list' | 'detail';
+  localOnly: boolean;
 };
 
 type SystemdServiceType = 'node' | 'python' | 'java' | 'go' | 'dotnet' | 'docker' | 'custom';
@@ -885,7 +886,8 @@ export function ServersView({
     setSystemdDeleteDialog({
       id: service.id,
       name: service.name,
-      from: 'list'
+      from: 'list',
+      localOnly: false
     });
   };
 
@@ -896,7 +898,8 @@ export function ServersView({
     setSystemdDeleteDialog({
       id: selectedSystemdDetailService.id,
       name: selectedSystemdDetailService.name,
-      from: 'detail'
+      from: 'detail',
+      localOnly: false
     });
   };
 
@@ -977,7 +980,7 @@ export function ServersView({
     if (!systemdDeleteDialog) {
       return;
     }
-    const { id, name, from } = systemdDeleteDialog;
+    const { id, name, from, localOnly } = systemdDeleteDialog;
     setSystemdDeleteDialog(null);
 
     if (from === 'detail') {
@@ -987,8 +990,8 @@ export function ServersView({
     }
     setSystemdBusy(true);
     try {
-      await deleteSystemdDeployService({ id });
-      setSystemdMessage(`已删除部署服务：${name}`);
+      await deleteSystemdDeployService({ id, remove_remote: !localOnly });
+      setSystemdMessage(localOnly ? `已删除本地配置：${name}` : `已删除部署服务：${name}`);
       setSystemdMessageIsError(false);
       if (from === 'detail') {
         onBackSystemdList();
@@ -1881,7 +1884,24 @@ export function ServersView({
         <div className="systemd-confirm-overlay" role="dialog" aria-modal="true" aria-label="确认删除部署服务">
           <div className="systemd-confirm-modal">
             <h3>确认删除</h3>
-            <p>将删除部署服务“{systemdDeleteDialog.name}”，并尝试卸载远端 systemd unit。该操作不可撤销。</p>
+            <p>
+              {systemdDeleteDialog.localOnly
+                ? `将仅删除本地部署配置“${systemdDeleteDialog.name}”，不会删除远端 systemd 服务。`
+                : `将删除部署服务“${systemdDeleteDialog.name}”，并尝试卸载远端 systemd unit。该操作不可撤销。`}
+            </p>
+            <label className="systemd-confirm-checkbox">
+              <input
+                type="checkbox"
+                checked={systemdDeleteDialog.localOnly}
+                onChange={(event) =>
+                  setSystemdDeleteDialog((previous) =>
+                    previous ? { ...previous, localOnly: event.target.checked } : previous
+                  )
+                }
+                disabled={isDeleteConfirmBusy}
+              />
+              仅删除本地配置（不删除远程服务）
+            </label>
             <div className="card-actions systemd-confirm-actions">
               <button
                 type="button"
@@ -1896,7 +1916,7 @@ export function ServersView({
                 onClick={() => void onConfirmDeleteSystemd()}
                 disabled={isDeleteConfirmBusy}
               >
-                {isDeleteConfirmBusy ? '删除中...' : '确认删除'}
+                {isDeleteConfirmBusy ? '删除中...' : systemdDeleteDialog.localOnly ? '确认仅删本地' : '确认删除'}
               </button>
             </div>
           </div>
