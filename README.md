@@ -63,3 +63,4 @@ pnpm run build
 - See implementation summary: `docs/v1.0.0-implementation-summary.md`
 - See implementation summary: `docs/v1.2.0-implementation-summary.md`
 - See developer module map: `docs/developer-module-quick-reference.md`
+- See coding standards: `docs/coding-standards.md`

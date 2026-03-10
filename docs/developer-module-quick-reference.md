@@ -55,3 +55,11 @@
 | 新增 SFTP 操作命令 | `src-tauri/src/sftp.rs`, `src-tauri/src/commands.rs`, `src/types.ts`, `src/App.tsx` |
 | 调整服务器配置字段 | `src/components/ServerEditorModal.tsx`, `src/types.ts`, `src-tauri/src/profiles.rs` |
 | 优化 SFTP 列表 UI 或交互 | `src/components/SftpView.tsx`, `src/styles/app.css`, `src/App.tsx` |
+
+## 6) 编码规范（新增）
+
+- 不要把所有功能写在一个代码文件中，必须按职责合理拆分。
+- 页面入口（如 `*View.tsx`）保持轻量，只做导航/组装，不承载完整业务细节。
+- 业务状态与副作用优先抽到 `src/app/hooks/`，避免在页面文件堆积复杂逻辑。
+- 可复用片段拆分到 `src/components/<domain>/`，API 调用统一收敛到 `src/app/api/`。
+- 详细规范见：`docs/coding-standards.md`
