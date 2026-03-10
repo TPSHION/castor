@@ -1,7 +1,21 @@
-import type { ReactNode, RefObject } from 'react';
-import type { ConnectionProfile, SystemdDeployService, SystemdServiceStatus } from '../../types';
-import type { SystemdDeleteDialogState } from './types';
-import { systemdLogOutputModeLabel, systemdLogOutputPathLabel } from './helpers';
+import type { Dispatch, ReactNode, RefObject, SetStateAction } from 'react';
+import type {
+  ConnectionProfile,
+  RemoteSystemdServiceItem,
+  SystemdDeployService,
+  SystemdLogOutputMode,
+  SystemdScope,
+  SystemdServiceStatus
+} from '../../types';
+import { SYSTEMD_EXECSTART_EXAMPLES, SYSTEMD_LOG_OUTPUT_MODE_OPTIONS, SYSTEMD_SERVICE_TYPES } from './constants';
+import {
+  defaultSystemdLogOutputPath,
+  firstExecStartExample,
+  normalizeComparableServiceName,
+  systemdLogOutputModeLabel,
+  systemdLogOutputPathLabel
+} from './helpers';
+import type { SystemdDeleteDialogState, SystemdFormState } from './types';
 
 type TextInputProps = {
   autoComplete: string;
@@ -683,6 +697,361 @@ export function SystemdFormHeader({
         >
           {systemdSubmitAction === 'save-and-deploy' ? '部署中...' : '保存并部署'}
         </button>
+      </div>
+    </div>
+  );
+}
+
+type SystemdFormPanelProps = {
+  profiles: ConnectionProfile[];
+  textInputProps: TextInputProps;
+  systemdBusy: boolean;
+  systemdMessage: string | null;
+  systemdMessageIsError: boolean;
+  systemdImportPanelOpen: boolean;
+  systemdRemoteServicesBusy: boolean;
+  systemdImportBusy: boolean;
+  systemdRemoteServices: RemoteSystemdServiceItem[];
+  systemdRemoteServiceKeyword: string;
+  filteredSystemdRemoteServices: RemoteSystemdServiceItem[];
+  systemdSelectedRemoteServiceName: string;
+  existingSystemdServiceNameSet: Set<string>;
+  selectedRemoteServiceAlreadyAdded: boolean;
+  systemdForm: SystemdFormState;
+  setSystemdForm: Dispatch<SetStateAction<SystemdFormState>>;
+  setSystemdImportPanelOpen: (open: boolean) => void;
+  setSystemdRemoteServiceKeyword: (value: string) => void;
+  setSystemdSelectedRemoteServiceName: (value: string) => void;
+  onImportRemoteSystemdService: () => Promise<void>;
+  loadRemoteSystemdServiceList: () => Promise<void>;
+  selectedSystemdProfile: ConnectionProfile | null;
+  selectedServiceTypeExamples: { label: string; examples: string[] };
+  systemdServiceNameValidationMessage: string | null;
+};
+
+export function SystemdFormPanel({
+  profiles,
+  textInputProps,
+  systemdBusy,
+  systemdMessage,
+  systemdMessageIsError,
+  systemdImportPanelOpen,
+  systemdRemoteServicesBusy,
+  systemdImportBusy,
+  systemdRemoteServices,
+  systemdRemoteServiceKeyword,
+  filteredSystemdRemoteServices,
+  systemdSelectedRemoteServiceName,
+  existingSystemdServiceNameSet,
+  selectedRemoteServiceAlreadyAdded,
+  systemdForm,
+  setSystemdForm,
+  setSystemdImportPanelOpen,
+  setSystemdRemoteServiceKeyword,
+  setSystemdSelectedRemoteServiceName,
+  onImportRemoteSystemdService,
+  loadRemoteSystemdServiceList,
+  selectedSystemdProfile,
+  selectedServiceTypeExamples,
+  systemdServiceNameValidationMessage
+}: SystemdFormPanelProps) {
+  return (
+    <div className="systemd-form-scroll">
+      <p className="status-line">可选择“仅保存”或“保存并部署”（生成/更新 unit + daemon-reload + enable(可选) + restart）。</p>
+      {systemdMessage && <p className={systemdMessageIsError ? 'status-line error' : 'status-line'}>{systemdMessage}</p>}
+      {systemdImportPanelOpen && (
+        <article className="host-card systemd-import-panel">
+          <header className="host-card-header">
+            <div>
+              <h3>从现有 systemd 服务导入</h3>
+              <p>将读取目标服务器当前 scope 下已存在的服务配置并填充表单</p>
+            </div>
+            <div className="card-actions">
+              <button
+                type="button"
+                onClick={() => void loadRemoteSystemdServiceList()}
+                disabled={systemdRemoteServicesBusy || systemdImportBusy}
+              >
+                {systemdRemoteServicesBusy ? '加载中...' : '刷新列表'}
+              </button>
+              <button type="button" onClick={() => setSystemdImportPanelOpen(false)} disabled={systemdImportBusy}>
+                关闭
+              </button>
+            </div>
+          </header>
+
+          {systemdRemoteServices.length === 0 ? (
+            <p className="systemd-service-meta">未发现可导入的自建服务（仅展示常见用户自建目录下的服务）。</p>
+          ) : (
+            <>
+              <label className="field-label">
+                搜索服务
+                <input
+                  value={systemdRemoteServiceKeyword}
+                  onChange={(event) => setSystemdRemoteServiceKeyword(event.target.value)}
+                  placeholder="输入服务名或状态关键字"
+                  disabled={systemdRemoteServicesBusy || systemdImportBusy}
+                  {...textInputProps}
+                />
+              </label>
+              {filteredSystemdRemoteServices.length === 0 ? (
+                <p className="systemd-service-meta">未匹配到服务，请调整搜索关键字。</p>
+              ) : (
+                <label className="field-label">
+                  选择已有服务
+                  <select
+                    value={systemdSelectedRemoteServiceName}
+                    onChange={(event) => setSystemdSelectedRemoteServiceName(event.target.value)}
+                    disabled={systemdRemoteServicesBusy || systemdImportBusy}
+                  >
+                    {filteredSystemdRemoteServices.map((item) => {
+                      const alreadyAdded = existingSystemdServiceNameSet.has(
+                        normalizeComparableServiceName(item.service_name)
+                      );
+                      return (
+                        <option key={item.service_name} value={item.service_name}>
+                          {item.service_name}.service ({item.unit_file_state})
+                          {alreadyAdded ? ' · 已添加' : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  {selectedRemoteServiceAlreadyAdded && (
+                    <span className="systemd-import-hint">该服务已在本地部署列表中（已添加）。</span>
+                  )}
+                </label>
+              )}
+            </>
+          )}
+
+          <div className="card-actions">
+            <button
+              type="button"
+              onClick={() => void onImportRemoteSystemdService()}
+              disabled={!systemdSelectedRemoteServiceName || systemdRemoteServicesBusy || systemdImportBusy}
+            >
+              {systemdImportBusy ? '导入中...' : '导入配置到表单'}
+            </button>
+          </div>
+        </article>
+      )}
+
+      <div className="systemd-form-grid">
+        <label className="field-label">
+          部署名称
+          <input
+            value={systemdForm.name}
+            onChange={(event) => setSystemdForm((prev) => ({ ...prev, name: event.target.value }))}
+            placeholder="如：生产环境 Web API"
+            disabled={systemdBusy}
+            {...textInputProps}
+          />
+        </label>
+
+        <label className="field-label">
+          目标服务器
+          <select
+            value={systemdForm.profileId}
+            onChange={(event) => {
+              const nextProfile = profiles.find((item) => item.id === event.target.value);
+              setSystemdForm((prev) => ({
+                ...prev,
+                profileId: event.target.value,
+                serviceUser: nextProfile?.username ?? prev.serviceUser
+              }));
+            }}
+            disabled={profiles.length === 0 || systemdBusy}
+          >
+            {profiles.length === 0 && <option value="">暂无服务器</option>}
+            {profiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.name} ({profile.username}@{profile.host})
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="field-label">
+          服务名
+          <input
+            value={systemdForm.serviceName}
+            onChange={(event) => {
+              const nextServiceName = event.target.value;
+              setSystemdForm((prev) => {
+                const prevDefaultPath = defaultSystemdLogOutputPath(prev.serviceName);
+                const shouldSyncPath = !prev.logOutputPath.trim() || prev.logOutputPath === prevDefaultPath;
+                return {
+                  ...prev,
+                  serviceName: nextServiceName,
+                  logOutputPath: shouldSyncPath ? defaultSystemdLogOutputPath(nextServiceName) : prev.logOutputPath
+                };
+              });
+            }}
+            placeholder="my-app"
+            disabled={systemdBusy}
+            aria-invalid={Boolean(systemdServiceNameValidationMessage)}
+            {...textInputProps}
+          />
+          {systemdServiceNameValidationMessage && (
+            <span className="field-error-text">{systemdServiceNameValidationMessage}</span>
+          )}
+        </label>
+
+        <label className="field-label">
+          部署范围
+          <select
+            value={systemdForm.scope}
+            onChange={(event) => setSystemdForm((prev) => ({ ...prev, scope: event.target.value as SystemdScope }))}
+            disabled={systemdBusy}
+          >
+            <option value="system">system</option>
+            <option value="user">user</option>
+          </select>
+        </label>
+
+        <label className="field-label">
+          日志输出
+          <select
+            value={systemdForm.logOutputMode}
+            onChange={(event) => {
+              const mode = event.target.value as SystemdLogOutputMode;
+              setSystemdForm((prev) => ({
+                ...prev,
+                logOutputMode: mode,
+                logOutputPath:
+                  mode === 'file' ? prev.logOutputPath.trim() || defaultSystemdLogOutputPath(prev.serviceName) : prev.logOutputPath
+              }));
+            }}
+            disabled={systemdBusy}
+          >
+            {SYSTEMD_LOG_OUTPUT_MODE_OPTIONS.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="field-label">
+          日志文件路径
+          <input
+            value={systemdForm.logOutputPath}
+            onChange={(event) => setSystemdForm((prev) => ({ ...prev, logOutputPath: event.target.value }))}
+            placeholder={defaultSystemdLogOutputPath(systemdForm.serviceName)}
+            disabled={systemdBusy || systemdForm.logOutputMode !== 'file'}
+            {...textInputProps}
+          />
+        </label>
+
+        <label className="field-label systemd-form-span">
+          描述
+          <input
+            value={systemdForm.description}
+            onChange={(event) => setSystemdForm((prev) => ({ ...prev, description: event.target.value }))}
+            placeholder="Managed by Castor"
+            disabled={systemdBusy}
+            {...textInputProps}
+          />
+        </label>
+
+        <label className="field-label systemd-form-span">
+          工作目录
+          <input
+            value={systemdForm.workingDir}
+            onChange={(event) => setSystemdForm((prev) => ({ ...prev, workingDir: event.target.value }))}
+            placeholder="/opt/my-app"
+            disabled={systemdBusy}
+            {...textInputProps}
+          />
+        </label>
+
+        <label className="field-label systemd-form-span">
+          ExecStart
+          <div className="systemd-service-type-list" role="group" aria-label="服务类型">
+            {SYSTEMD_SERVICE_TYPES.map((type) => (
+              <button
+                key={type}
+                type="button"
+                className={systemdForm.serviceType === type ? 'systemd-service-type-btn active' : 'systemd-service-type-btn'}
+                onClick={() => setSystemdForm((prev) => ({ ...prev, serviceType: type }))}
+                disabled={systemdBusy}
+              >
+                {SYSTEMD_EXECSTART_EXAMPLES[type].label}
+              </button>
+            ))}
+          </div>
+          <input
+            className="systemd-execstart-input"
+            value={systemdForm.execStart}
+            onChange={(event) => setSystemdForm((prev) => ({ ...prev, execStart: event.target.value }))}
+            placeholder={firstExecStartExample(systemdForm.serviceType) || '/usr/bin/node /opt/my-app/server.js'}
+            disabled={systemdBusy}
+            {...textInputProps}
+          />
+          <div className="systemd-example-box">
+            <p className="systemd-example-title">示例命令（{selectedServiceTypeExamples.label}）</p>
+            {selectedServiceTypeExamples.examples.map((example) => (
+              <code key={example} className="systemd-example-code">
+                {example}
+              </code>
+            ))}
+          </div>
+        </label>
+
+        <label className="field-label systemd-form-span">
+          ExecStop (可选)
+          <input
+            value={systemdForm.execStop}
+            onChange={(event) => setSystemdForm((prev) => ({ ...prev, execStop: event.target.value }))}
+            placeholder="/bin/kill -s SIGTERM $MAINPID"
+            disabled={systemdBusy}
+            {...textInputProps}
+          />
+        </label>
+
+        <label className="field-label">
+          运行用户
+          <input
+            value={systemdForm.serviceUser}
+            onChange={(event) => setSystemdForm((prev) => ({ ...prev, serviceUser: event.target.value }))}
+            placeholder={selectedSystemdProfile?.username ?? 'root'}
+            disabled={systemdBusy || systemdForm.scope === 'user'}
+            {...textInputProps}
+          />
+        </label>
+      </div>
+
+      <label className="field-label systemd-form-span">
+        环境变量 (每行 `KEY=VALUE`)
+        <textarea
+          rows={5}
+          value={systemdForm.environmentText}
+          onChange={(event) => setSystemdForm((prev) => ({ ...prev, environmentText: event.target.value }))}
+          placeholder={'NODE_ENV=production\nPORT=3000'}
+          disabled={systemdBusy}
+          {...textInputProps}
+        />
+      </label>
+
+      <div className="systemd-options">
+        <label className="systemd-option">
+          <input
+            type="checkbox"
+            checked={systemdForm.enableOnBoot}
+            onChange={(event) => setSystemdForm((prev) => ({ ...prev, enableOnBoot: event.target.checked }))}
+            disabled={systemdBusy}
+          />
+          开机自启
+        </label>
+        <label className="systemd-option">
+          <input
+            type="checkbox"
+            checked={systemdForm.useSudo}
+            onChange={(event) => setSystemdForm((prev) => ({ ...prev, useSudo: event.target.checked }))}
+            disabled={systemdBusy || systemdForm.scope === 'user'}
+          />
+          使用 sudo
+        </label>
       </div>
     </div>
   );
