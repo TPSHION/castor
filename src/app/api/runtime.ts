@@ -1,6 +1,13 @@
 import type {
+  CancelRuntimeDeployRequest,
   CancelServerRuntimeProbeRequest,
+  ListRuntimeDeployVersionsRequest,
   PreflightServerRuntimeProbeRequest,
+  RuntimeDeployApplyRequest,
+  RuntimeDeployApplyResult,
+  RuntimeDeployPlanRequest,
+  RuntimeDeployPlanResult,
+  RuntimeDeployVersionsResult,
   ProbeServerRuntimesRequest,
   RuntimeProbeResult
 } from '../../types';
@@ -16,4 +23,23 @@ export function preflightServerRuntimeProbe(request: PreflightServerRuntimeProbe
 
 export function cancelServerRuntimeProbe(request: CancelServerRuntimeProbeRequest) {
   return invokeTauriWithRequest<void, CancelServerRuntimeProbeRequest>('cancel_server_runtime_probe', request);
+}
+
+export function planRuntimeDeploy(request: RuntimeDeployPlanRequest) {
+  return invokeTauriWithRequest<RuntimeDeployPlanResult, RuntimeDeployPlanRequest>('plan_runtime_deploy', request);
+}
+
+export function applyRuntimeDeploy(request: RuntimeDeployApplyRequest) {
+  return invokeTauriWithRequest<RuntimeDeployApplyResult, RuntimeDeployApplyRequest>('apply_runtime_deploy', request);
+}
+
+export function cancelRuntimeDeploy(request: CancelRuntimeDeployRequest) {
+  return invokeTauriWithRequest<void, CancelRuntimeDeployRequest>('cancel_runtime_deploy', request);
+}
+
+export function listRuntimeDeployVersions(request: ListRuntimeDeployVersionsRequest) {
+  return invokeTauriWithRequest<RuntimeDeployVersionsResult, ListRuntimeDeployVersionsRequest>(
+    'list_runtime_deploy_versions',
+    request
+  );
 }

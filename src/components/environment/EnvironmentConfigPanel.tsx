@@ -33,24 +33,6 @@ export function EnvironmentConfigPanel({ profiles }: { profiles: ConnectionProfi
 
   return (
     <section className="environment-panel">
-      <div className="section-header">
-        <h2>环境探测</h2>
-        <div className="section-actions">
-          <button
-            type="button"
-            onClick={vm.onProbeServerRuntimes}
-            disabled={vm.runtimeProbeBusy || vm.runtimeProbeChecking || !vm.selectedProfile}
-          >
-            {vm.runtimeProbeBusy ? '探测中...' : vm.runtimeProbeChecking ? '检查中...' : '开始探测'}
-          </button>
-          {vm.runtimeProbeBusy && (
-            <button type="button" className="danger" onClick={vm.onCancelRuntimeProbe}>
-              取消探测
-            </button>
-          )}
-        </div>
-      </div>
-
       {profiles.length === 0 ? (
         <div className="empty-state">暂无服务器配置，请先新增服务器。</div>
       ) : (
@@ -73,68 +55,90 @@ export function EnvironmentConfigPanel({ profiles }: { profiles: ConnectionProfi
             </label>
           </div>
 
-          <p className={vm.runtimeProbeMessageIsError ? 'status-line error' : 'status-line'}>
-            {vm.runtimeProbeMessage ?? '点击“开始探测”检查远程服务器运行环境。'}
-          </p>
-          {vm.latestCheckedAt > 0 && <p className="status-line">最近探测时间：{formatUnixTime(vm.latestCheckedAt)}</p>}
-
-          <div className="environment-runtime-list-scroll">
-            <div className="environment-runtime-grid">
-              {sortedLanguages.map((language) => {
-              const result = resultMap.get(language);
-              const activeMatch = result?.matches?.find((item) => item.active);
-              const status = renderRuntimeStatus(result);
-              const found = result?.found ?? false;
-              return (
-                <article key={language} className="host-card environment-runtime-card">
-                  <header className="host-card-header">
-                    <div>
-                      <h3>{RUNTIME_LANGUAGE_LABELS[language]}</h3>
-                      <p>{status}</p>
-                    </div>
-                    <span className={found ? 'chip environment-chip found' : 'chip environment-chip'}>
-                      {status}
-                    </span>
-                  </header>
-
-                  <div className="environment-runtime-meta">
-                    <div className="environment-runtime-summary">
-                      <div className="environment-runtime-row">
-                        <p className="environment-runtime-row-label">当前使用</p>
-                        <code className="environment-runtime-row-value code">
-                          {activeMatch?.binary_path?.trim() || result?.binary_path?.trim() || '-'}
-                        </code>
-                      </div>
-                      <div className="environment-runtime-row">
-                        <p className="environment-runtime-row-label">版本</p>
-                        <p className="environment-runtime-row-value text">
-                          {activeMatch?.version?.trim() || result?.version?.trim() || '-'}
-                        </p>
-                      </div>
-                    </div>
-                    {result?.matches?.length ? (
-                      <div className="environment-runtime-matches">
-                        <p className="environment-runtime-matches-title">检测到 {result.matches.length} 个环境：</p>
-                        <ul>
-                          {result.matches.map((item, index) => (
-                            <li key={`${language}-${item.binary_path}-${index}`}>
-                              <code className="environment-runtime-match-path">{item.binary_path}</code>
-                              <div className="environment-runtime-match-meta">
-                                {item.active && <span className="environment-runtime-active-badge">当前使用</span>}
-                                <p className="environment-runtime-match-version">{item.version?.trim() || '版本未知'}</p>
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ) : null}
-                    {result?.message?.trim() && <p className="status-line">{result.message}</p>}
-                  </div>
-                </article>
-              );
-            })}
+          <section className="environment-probe-panel">
+            <div className="section-header">
+              <h2>环境探测</h2>
+              <div className="section-actions">
+                <button
+                  type="button"
+                  onClick={vm.onProbeServerRuntimes}
+                  disabled={vm.runtimeProbeBusy || vm.runtimeProbeChecking || !vm.selectedProfile}
+                >
+                  {vm.runtimeProbeBusy ? '探测中...' : vm.runtimeProbeChecking ? '检查中...' : '开始探测'}
+                </button>
+                {vm.runtimeProbeBusy && (
+                  <button type="button" className="danger" onClick={vm.onCancelRuntimeProbe}>
+                    取消探测
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
+
+            <div className="environment-probe-status">
+              <p className={vm.runtimeProbeMessageIsError ? 'status-line error' : 'status-line'}>
+                {vm.runtimeProbeMessage ?? '点击“开始探测”检查远程服务器运行环境。'}
+              </p>
+              {vm.latestCheckedAt > 0 && <p className="status-line">最近探测时间：{formatUnixTime(vm.latestCheckedAt)}</p>}
+            </div>
+
+            <div className="environment-runtime-list-scroll">
+              <div className="environment-runtime-grid">
+                {sortedLanguages.map((language) => {
+                  const result = resultMap.get(language);
+                  const activeMatch = result?.matches?.find((item) => item.active);
+                  const status = renderRuntimeStatus(result);
+                  const found = result?.found ?? false;
+                  return (
+                    <article key={language} className="host-card environment-runtime-card">
+                      <header className="host-card-header">
+                        <div>
+                          <h3>{RUNTIME_LANGUAGE_LABELS[language]}</h3>
+                          <p>{status}</p>
+                        </div>
+                        <span className={found ? 'chip environment-chip found' : 'chip environment-chip'}>
+                          {status}
+                        </span>
+                      </header>
+
+                      <div className="environment-runtime-meta">
+                        <div className="environment-runtime-summary">
+                          <div className="environment-runtime-row">
+                            <p className="environment-runtime-row-label">当前使用</p>
+                            <code className="environment-runtime-row-value code">
+                              {activeMatch?.binary_path?.trim() || result?.binary_path?.trim() || '-'}
+                            </code>
+                          </div>
+                          <div className="environment-runtime-row">
+                            <p className="environment-runtime-row-label">版本</p>
+                            <p className="environment-runtime-row-value text">
+                              {activeMatch?.version?.trim() || result?.version?.trim() || '-'}
+                            </p>
+                          </div>
+                        </div>
+                        {result?.matches?.length ? (
+                          <div className="environment-runtime-matches">
+                            <p className="environment-runtime-matches-title">检测到 {result.matches.length} 个环境：</p>
+                            <ul>
+                              {result.matches.map((item, index) => (
+                                <li key={`${language}-${item.binary_path}-${index}`}>
+                                  <code className="environment-runtime-match-path">{item.binary_path}</code>
+                                  <div className="environment-runtime-match-meta">
+                                    {item.active && <span className="environment-runtime-active-badge">当前使用</span>}
+                                    <p className="environment-runtime-match-version">{item.version?.trim() || '版本未知'}</p>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                        {result?.message?.trim() && <p className="status-line">{result.message}</p>}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
         </>
       )}
     </section>

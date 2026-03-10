@@ -37,6 +37,14 @@ use crate::runtime::{
     probe_server_runtimes as probe_server_runtimes_impl, CancelServerRuntimeProbeRequest,
     PreflightServerRuntimeProbeRequest, ProbeServerRuntimesRequest, RuntimeProbeResult,
 };
+use crate::runtime_deploy::{
+    apply_runtime_deploy as apply_runtime_deploy_impl,
+    cancel_runtime_deploy as cancel_runtime_deploy_impl,
+    list_runtime_deploy_versions as list_runtime_deploy_versions_impl,
+    plan_runtime_deploy as plan_runtime_deploy_impl, CancelRuntimeDeployRequest,
+    ListRuntimeDeployVersionsRequest, RuntimeDeployApplyRequest, RuntimeDeployApplyResult,
+    RuntimeDeployPlanRequest, RuntimeDeployPlanResult, RuntimeDeployVersionsResult,
+};
 use crate::sftp::{
     cancel_transfer as cancel_sftp_transfer_impl, connect_session as sftp_connect_impl,
     create_dir as sftp_create_dir_impl, delete_entry as sftp_delete_entry_impl,
@@ -144,6 +152,43 @@ pub fn preflight_server_runtime_probe(
 #[tauri::command]
 pub fn cancel_server_runtime_probe(request: CancelServerRuntimeProbeRequest) -> Result<(), String> {
     cancel_server_runtime_probe_impl(request)
+}
+
+#[tauri::command]
+pub fn plan_runtime_deploy(
+    app: AppHandle,
+    request: RuntimeDeployPlanRequest,
+) -> Result<RuntimeDeployPlanResult, String> {
+    plan_runtime_deploy_impl(&app, request)
+}
+
+#[tauri::command]
+pub async fn apply_runtime_deploy(
+    app: AppHandle,
+    request: RuntimeDeployApplyRequest,
+) -> Result<RuntimeDeployApplyResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || apply_runtime_deploy_impl(&app_handle, request))
+        .await
+        .map_err(|err| format!("failed to join runtime deploy task: {err}"))?
+}
+
+#[tauri::command]
+pub fn cancel_runtime_deploy(request: CancelRuntimeDeployRequest) -> Result<(), String> {
+    cancel_runtime_deploy_impl(request)
+}
+
+#[tauri::command]
+pub async fn list_runtime_deploy_versions(
+    app: AppHandle,
+    request: ListRuntimeDeployVersionsRequest,
+) -> Result<RuntimeDeployVersionsResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        list_runtime_deploy_versions_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join runtime deploy versions task: {err}"))?
 }
 
 #[tauri::command]

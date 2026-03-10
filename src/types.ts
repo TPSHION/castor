@@ -249,6 +249,75 @@ export type RuntimeProbeResult = {
   matches: RuntimeProbeMatch[];
 };
 
+export type RuntimeDeployLanguage = RuntimeLanguage;
+
+export type RuntimeDeployPlanRequest = {
+  profile_id: string;
+  language: RuntimeDeployLanguage;
+  version: string;
+  set_as_default?: boolean;
+};
+
+export type RuntimeDeployApplyRequest = {
+  profile_id: string;
+  language: RuntimeDeployLanguage;
+  version: string;
+  set_as_default?: boolean;
+  deploy_id: string;
+};
+
+export type CancelRuntimeDeployRequest = {
+  deploy_id: string;
+};
+
+export type RuntimeDeployStep = {
+  title: string;
+  command: string;
+};
+
+export type RuntimeDeployPlanResult = {
+  language: RuntimeDeployLanguage;
+  version: string;
+  manager: string;
+  steps: RuntimeDeployStep[];
+};
+
+export type RuntimeDeployApplyResult = {
+  language: RuntimeDeployLanguage;
+  version: string;
+  manager: string;
+  success: boolean;
+  completed_at: number;
+  logs: string[];
+};
+
+export type RuntimeDeployLogPayload = {
+  deploy_id: string;
+  level: 'info' | 'warn' | 'error' | 'stdout' | 'stderr' | 'done' | string;
+  line: string;
+  timestamp: number;
+};
+
+export type ListRuntimeDeployVersionsRequest = {
+  profile_id: string;
+  language: RuntimeDeployLanguage;
+  keyword?: string;
+  limit?: number;
+};
+
+export type RuntimeDeployVersionsResult = {
+  language: RuntimeDeployLanguage;
+  manager: string;
+  versions: RuntimeDeployVersionItem[];
+};
+
+export type RuntimeVersionChannel = 'stable' | 'prerelease' | 'unknown';
+
+export type RuntimeDeployVersionItem = {
+  version: string;
+  channel: RuntimeVersionChannel;
+};
+
 export type SystemdScope = 'system' | 'user';
 export type SystemdLogOutputMode = 'journal' | 'file' | 'none';
 
