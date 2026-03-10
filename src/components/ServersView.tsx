@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ConnectionProfile } from '../types';
 import { SystemdDeployPanel } from './SystemdDeployPanel';
+import { EnvironmentConfigPanel } from './environment/EnvironmentConfigPanel';
 
 type ServersViewProps = {
   profiles: ConnectionProfile[];
@@ -27,7 +28,7 @@ export function ServersView({
   onOpenEditEditor,
   onDeleteProfile
 }: ServersViewProps) {
-  const [activeMenu, setActiveMenu] = useState<'servers' | 'settings' | 'systemd'>('servers');
+  const [activeMenu, setActiveMenu] = useState<'servers' | 'settings' | 'systemd' | 'environment'>('servers');
 
   return (
     <div className="servers-page">
@@ -53,6 +54,13 @@ export function ServersView({
           onClick={() => setActiveMenu('systemd')}
         >
           systemd部署
+        </button>
+        <button
+          type="button"
+          className={activeMenu === 'environment' ? 'servers-nav-btn active' : 'servers-nav-btn'}
+          onClick={() => setActiveMenu('environment')}
+        >
+          环境配置
         </button>
       </aside>
 
@@ -127,6 +135,8 @@ export function ServersView({
           </>
         ) : activeMenu === 'systemd' ? (
           <SystemdDeployPanel profiles={profiles} />
+        ) : activeMenu === 'environment' ? (
+          <EnvironmentConfigPanel profiles={profiles} />
         ) : (
           <div className="empty-state">设置内容将在这里展示。</div>
         )}

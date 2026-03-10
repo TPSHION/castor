@@ -2,20 +2,22 @@ mod commands;
 mod deploy;
 mod localfs;
 mod profiles;
+mod runtime;
 mod sftp;
 mod ssh;
 
 use commands::{
-    apply_systemd_deploy_service, cancel_sftp_transfer, connect_local_terminal, connect_ssh,
-    control_systemd_deploy_service, delete_connection_profile, delete_systemd_deploy_service,
-    deploy_systemd_service, disconnect_ssh, get_remote_systemd_service_template,
-    get_systemd_deploy_service_logs, get_systemd_deploy_service_status,
-    list_connection_profiles, list_local_dir, list_sessions, list_systemd_deploy_services,
-    list_remote_systemd_services,
-    local_create_dir, local_delete_entry, local_rename_entry, resize_ssh, send_ssh_input,
-    sftp_connect, sftp_create_dir, sftp_delete_entry, sftp_disconnect, sftp_download_file,
-    sftp_list_dir, sftp_rename_entry, sftp_set_permissions, sftp_upload_path, test_ssh_connection,
-    upsert_connection_profile, upsert_systemd_deploy_service,
+    apply_systemd_deploy_service, cancel_server_runtime_probe, cancel_sftp_transfer,
+    connect_local_terminal, connect_ssh, control_systemd_deploy_service,
+    delete_connection_profile, delete_systemd_deploy_service, deploy_systemd_service,
+    disconnect_ssh, get_remote_systemd_service_template, get_systemd_deploy_service_logs,
+    get_systemd_deploy_service_status, list_connection_profiles, list_local_dir,
+    list_remote_systemd_services, list_sessions, list_systemd_deploy_services, local_create_dir,
+    local_delete_entry, local_rename_entry, preflight_server_runtime_probe, probe_server_runtimes,
+    resize_ssh, send_ssh_input, sftp_connect, sftp_create_dir, sftp_delete_entry,
+    sftp_disconnect, sftp_download_file, sftp_list_dir, sftp_rename_entry,
+    sftp_set_permissions, sftp_upload_path, test_ssh_connection, upsert_connection_profile,
+    upsert_systemd_deploy_service,
 };
 use ssh::SshState;
 
@@ -33,6 +35,9 @@ fn main() {
             list_connection_profiles,
             upsert_connection_profile,
             delete_connection_profile,
+            preflight_server_runtime_probe,
+            probe_server_runtimes,
+            cancel_server_runtime_probe,
             sftp_connect,
             sftp_disconnect,
             sftp_list_dir,

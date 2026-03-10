@@ -31,6 +31,12 @@ use crate::profiles::{
     upsert_connection_profile as upsert_profile_impl, ConnectionProfile,
     DeleteConnectionProfileRequest, UpsertConnectionProfileRequest,
 };
+use crate::runtime::{
+    cancel_server_runtime_probe as cancel_server_runtime_probe_impl,
+    preflight_server_runtime_probe as preflight_server_runtime_probe_impl,
+    probe_server_runtimes as probe_server_runtimes_impl, CancelServerRuntimeProbeRequest,
+    PreflightServerRuntimeProbeRequest, ProbeServerRuntimesRequest, RuntimeProbeResult,
+};
 use crate::sftp::{
     cancel_transfer as cancel_sftp_transfer_impl, connect_session as sftp_connect_impl,
     create_dir as sftp_create_dir_impl, delete_entry as sftp_delete_entry_impl,
@@ -114,6 +120,30 @@ pub fn delete_connection_profile(
     request: DeleteConnectionProfileRequest,
 ) -> Result<(), String> {
     delete_profile_impl(&app, request)
+}
+
+#[tauri::command]
+pub async fn probe_server_runtimes(
+    app: AppHandle,
+    request: ProbeServerRuntimesRequest,
+) -> Result<Vec<RuntimeProbeResult>, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || probe_server_runtimes_impl(&app_handle, request))
+        .await
+        .map_err(|err| format!("failed to join runtime probe task: {err}"))?
+}
+
+#[tauri::command]
+pub fn preflight_server_runtime_probe(
+    app: AppHandle,
+    request: PreflightServerRuntimeProbeRequest,
+) -> Result<(), String> {
+    preflight_server_runtime_probe_impl(&app, request)
+}
+
+#[tauri::command]
+pub fn cancel_server_runtime_probe(request: CancelServerRuntimeProbeRequest) -> Result<(), String> {
+    cancel_server_runtime_probe_impl(request)
 }
 
 #[tauri::command]

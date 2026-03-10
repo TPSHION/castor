@@ -217,6 +217,38 @@ export type DeleteConnectionProfileRequest = {
   id: string;
 };
 
+export type RuntimeLanguage = 'node' | 'java' | 'go' | 'python';
+
+export type ProbeServerRuntimesRequest = {
+  profile_id: string;
+  probe_id: string;
+};
+
+export type PreflightServerRuntimeProbeRequest = {
+  profile_id: string;
+};
+
+export type CancelServerRuntimeProbeRequest = {
+  probe_id: string;
+};
+
+export type RuntimeProbeMatch = {
+  binary_path: string;
+  version?: string;
+  message?: string;
+  active: boolean;
+};
+
+export type RuntimeProbeResult = {
+  language: RuntimeLanguage;
+  found: boolean;
+  binary_path?: string;
+  version?: string;
+  message?: string;
+  checked_at: number;
+  matches: RuntimeProbeMatch[];
+};
+
 export type SystemdScope = 'system' | 'user';
 export type SystemdLogOutputMode = 'journal' | 'file' | 'none';
 
