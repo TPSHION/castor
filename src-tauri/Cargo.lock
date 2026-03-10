@@ -243,8 +243,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "castor-ssh-desktop"
-version = "0.1.0"
+name = "castor"
+version = "1.2.0"
 dependencies = [
  "portable-pty",
  "serde",
