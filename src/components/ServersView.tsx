@@ -60,7 +60,7 @@ export function ServersView({
           className={activeMenu === 'environment' ? 'servers-nav-btn active' : 'servers-nav-btn'}
           onClick={() => setActiveMenu('environment')}
         >
-          环境配置
+          环境探测
         </button>
       </aside>
 

@@ -8,6 +8,7 @@ const RUNTIME_LANGUAGE_LABELS: Record<RuntimeLanguage, string> = {
   go: 'Go',
   python: 'Python'
 };
+const RUNTIME_LANGUAGE_ORDER: RuntimeLanguage[] = ['node', 'java', 'go', 'python'];
 
 function renderRuntimeStatus(result: RuntimeProbeResult | undefined) {
   if (!result || result.checked_at === 0) {
@@ -21,11 +22,19 @@ export function EnvironmentConfigPanel({ profiles }: { profiles: ConnectionProfi
   const resultMap = new Map<RuntimeLanguage, RuntimeProbeResult>(
     vm.runtimeProbeResults.map((item) => [item.language, item])
   );
+  const sortedLanguages = [...RUNTIME_LANGUAGE_ORDER].sort((left, right) => {
+    const leftFound = resultMap.get(left)?.found ? 1 : 0;
+    const rightFound = resultMap.get(right)?.found ? 1 : 0;
+    if (leftFound !== rightFound) {
+      return rightFound - leftFound;
+    }
+    return RUNTIME_LANGUAGE_ORDER.indexOf(left) - RUNTIME_LANGUAGE_ORDER.indexOf(right);
+  });
 
   return (
     <section className="environment-panel">
       <div className="section-header">
-        <h2>环境配置</h2>
+        <h2>环境探测</h2>
         <div className="section-actions">
           <button
             type="button"
@@ -69,8 +78,9 @@ export function EnvironmentConfigPanel({ profiles }: { profiles: ConnectionProfi
           </p>
           {vm.latestCheckedAt > 0 && <p className="status-line">最近探测时间：{formatUnixTime(vm.latestCheckedAt)}</p>}
 
-          <div className="environment-runtime-grid">
-            {(Object.keys(RUNTIME_LANGUAGE_LABELS) as RuntimeLanguage[]).map((language) => {
+          <div className="environment-runtime-list-scroll">
+            <div className="environment-runtime-grid">
+              {sortedLanguages.map((language) => {
               const result = resultMap.get(language);
               const activeMatch = result?.matches?.find((item) => item.active);
               const status = renderRuntimeStatus(result);
@@ -123,6 +133,7 @@ export function EnvironmentConfigPanel({ profiles }: { profiles: ConnectionProfi
                 </article>
               );
             })}
+            </div>
           </div>
         </>
       )}
