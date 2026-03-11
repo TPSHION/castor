@@ -3,31 +3,41 @@
 ## 1. 模块拆分（强制）
 
 - 不允许把一个完整功能域全部堆在单个文件中。
-- 当某个页面既包含视图、状态管理、远程调用、复杂交互时，必须按职责拆分。
-- 推荐拆分方向：
-  - 页面入口组件：仅负责路由/菜单切换与模块组装。
-  - 业务容器组件：组织页面级流程，不承载底层实现细节。
-  - 展示组件（UI Partials）：只接收 `props`，不直接发起跨域副作用。
-  - hooks：状态与副作用逻辑放入 `src/app/hooks/`（可按领域建立子目录）。
-  - API 层：统一放在 `src/app/api/`，禁止在 UI 组件中直接拼接 invoke 请求。
-  - 类型与常量：按领域收敛到 `types.ts`、`constants.ts`、`helpers.tsx` 等文件。
+- 页面入口（`*View.tsx`）保持“入口薄、实现厚”，仅做切换与组装。
+- 业务流程、异步副作用、事件监听必须进入 `src/app/hooks/`。
+- API 调用统一收敛到 `src/app/api/`，UI 组件禁止直接拼接 invoke 命令。
 
-## 2. 文件体量建议
+## 2. 功能开发标准路径（强制）
 
-- 单个 TS/TSX 文件建议控制在 300 行以内；超过 500 行必须评估并拆分。
-- 出现以下任一情况时应立即拆分：
-  - 同时维护多个弹窗/面板的状态。
-  - 同时处理列表、详情、表单、日志等多种子场景。
-  - 包含大量事件回调并跨模块传递。
+新增功能必须按以下顺序推进：
 
-## 3. 命名与目录约定
+1. `types`
+2. `rust module`
+3. `commands/main 注册`
+4. `前端 api`
+5. `hook`
+6. `panel/ui`
 
-- hooks 统一命名为 `useXxx`，并放在 `src/app/hooks/`。
-- 可复用 UI 片段放在 `src/components/<domain>/` 下，避免堆积在页面入口文件。
-- 页面入口文件命名使用 `*View.tsx`，保持“入口薄、实现厚”的结构。
+详细说明见：`docs/feature-delivery-workflow.md`
 
-## 4. 变更要求
+## 3. 文件体量治理
 
-- 新增复杂功能时，优先新增模块而不是继续扩展已有巨型文件。
-- PR 自检必须包含“是否引入单文件功能堆积”的检查项。
-- 架构优化以“不改变现有行为”为前提，先做结构重构，再做功能迭代。
+- TS/TSX 文件建议 ≤ 300 行。
+- 超过 500 行必须拆分（至少拆出 types / helper / hook / partial 之一）。
+- 超过 800 行视为高优先级治理对象，禁止继续叠加新逻辑。
+- 样式文件若长期增长，按领域拆分（如 `styles/sftp.css`、`styles/systemd.css`）。
+
+## 4. 目录约定
+
+- hooks：`src/app/hooks/useXxx.ts(x)` 或 `src/app/hooks/<domain>/useXxx.ts(x)`
+- API：`src/app/api/<domain>.ts`
+- 可复用 UI：`src/components/<domain>/`
+- 领域类型：优先按领域拆分到 `src/components/<domain>/types.ts` 或 `src/app/types.ts`
+
+## 5. 变更要求
+
+- 新增复杂功能时，优先新建模块，而不是继续扩展巨型文件。
+- 重构优先保证行为不变；结构优化与功能迭代尽量分步提交。
+- 提交前必须至少执行：
+  - `pnpm run build`
+  - 若改 Rust：`cargo check --manifest-path src-tauri/Cargo.toml`

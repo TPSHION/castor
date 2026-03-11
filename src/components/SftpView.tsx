@@ -1,60 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { listen, TauriEvent } from '@tauri-apps/api/event';
-import type { ConnectionProfile, LocalFsEntry, SftpEntry, SftpTransferProgressPayload } from '../types';
+import { useMemo, useState } from 'react';
+import type { LocalFsEntry, SftpEntry } from '../types';
 import { TransferTasksPanelModal } from './TransferTasksPanelModal';
-
-type SftpViewProps = {
-  isActive: boolean;
-  profiles: ConnectionProfile[];
-  selectedSftpProfileId: string;
-  selectedSftpProfile: ConnectionProfile | null;
-  connectedSftpProfile: ConnectionProfile | null;
-  sftpBusy: boolean;
-  sftpMessage: string | null;
-  sftpPath: string;
-  sftpPathInput: string;
-  sftpEntries: SftpEntry[];
-  sftpSelectedPath: string | null;
-  localPath: string;
-  localPathInput: string;
-  localParentPath: string | null;
-  localEntries: LocalFsEntry[];
-  localBusy: boolean;
-  localMessage: string | null;
-  localSelectedPath: string | null;
-  localTransferProgresses: SftpTransferProgressPayload[];
-  localCompletedTransferProgresses: SftpTransferProgressPayload[];
-  sftpTransferProgresses: SftpTransferProgressPayload[];
-  sftpCompletedTransferProgresses: SftpTransferProgressPayload[];
-  formatBytes: (value?: number) => string;
-  formatUnixTime: (value?: number) => string;
-  onSelectSftpProfile: (profileId: string) => void;
-  onConnectSftpHost: () => void;
-  onRefreshConnectedSftpHost: () => void;
-  onDisconnectSftpHost: () => void;
-  onSftpPathInputChange: (value: string) => void;
-  onOpenSftpPath: () => void;
-  onSftpGoParent: () => void;
-  onSftpEnterDir: (entry: SftpEntry) => void;
-  onSftpDownload: (entry: SftpEntry) => void;
-  onSftpSelectPath: (path: string) => void;
-  onOpenSftpContextMenu: (x: number, y: number, entry: SftpEntry | null) => void;
-  onLocalPathInputChange: (value: string) => void;
-  onLocalOpenPath: () => void;
-  onLocalGoParent: () => void;
-  onRefreshLocalDir: () => void;
-  onLocalEnterDir: (entry: LocalFsEntry) => void;
-  onLocalSelectPath: (path: string) => void;
-  onOpenLocalContextMenu: (x: number, y: number, entry: LocalFsEntry | null) => void;
-  onOpenCreateEditor: () => void;
-  onCancelUpload: (transferId: string) => void;
-  onCancelDownload: (transferId: string) => void;
-  onClearLocalCompletedTransfers: () => void;
-  onClearSftpCompletedTransfers: () => void;
-  onUploadLocalEntryToRemote: (entry: LocalFsEntry) => void;
-  onDownloadRemoteEntryToLocal: (entry: SftpEntry) => void;
-  onUploadSystemPathsToRemote: (paths: string[]) => void;
-};
+import { TransferProgressCard } from './sftp/TransferProgressCard';
+import { formatTransferEta } from './sftp/transferHelpers';
+import type { SftpViewProps } from './sftp/types';
+import { useSftpDragTransfer } from './sftp/useSftpDragTransfer';
 
 function getEntryRowClassName(isDir: boolean, selected: boolean) {
   if (isDir) {
@@ -117,330 +67,25 @@ export function SftpView({
 }: SftpViewProps) {
   const [isLocalTasksPanelOpen, setLocalTasksPanelOpen] = useState(false);
   const [isSftpTasksPanelOpen, setSftpTasksPanelOpen] = useState(false);
-  const [isLocalDropActive, setLocalDropActive] = useState(false);
-  const [isRemoteDropActive, setRemoteDropActive] = useState(false);
-  const [isSystemRemoteDropActive, setSystemRemoteDropActive] = useState(false);
-  const systemRemoteDropActiveRef = useRef(false);
-  const uploadSystemPathsToRemoteRef = useRef(onUploadSystemPathsToRemote);
-  const [isDragInteractionActive, setDragInteractionActive] = useState(false);
-  const [dragPayload, setDragPayload] = useState<{ source: 'local' | 'remote'; path: string; name: string } | null>(null);
-  const [dragPointer, setDragPointer] = useState<{ x: number; y: number } | null>(null);
-  const dragStartRef = useRef<{
-    source: 'local' | 'remote';
-    path: string;
-    name: string;
-    startX: number;
-    startY: number;
-  } | null>(null);
-  const localDropZoneRef = useRef<HTMLDivElement>(null);
-  const remoteDropZoneRef = useRef<HTMLDivElement>(null);
-
-  const isPointInElement = (element: HTMLDivElement | null, x: number, y: number) => {
-    if (!element) {
-      return false;
-    }
-    const rect = element.getBoundingClientRect();
-    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-  };
-
-  const setSystemRemoteDropState = (active: boolean) => {
-    systemRemoteDropActiveRef.current = active;
-    setSystemRemoteDropActive(active);
-  };
-
-  const isPointInRemoteDropZone = (x: number, y: number) => {
-    const scale = window.devicePixelRatio || 1;
-    return (
-      isPointInElement(remoteDropZoneRef.current, x, y) ||
-      isPointInElement(remoteDropZoneRef.current, x / scale, y / scale) ||
-      isPointInElement(remoteDropZoneRef.current, x * scale, y * scale)
-    );
-  };
-
-  const uploadSystemPaths = (paths: string[]) => {
-    const validPaths = Array.from(
-      new Set(
-        paths
-          .map((value) => value.trim())
-          .filter((value) => value.length > 0)
-      )
-    );
-    if (validPaths.length === 0) {
-      return;
-    }
-    uploadSystemPathsToRemoteRef.current(validPaths);
-  };
-
-  const hasDraggedFiles = (event: React.DragEvent) => Array.from(event.dataTransfer.types).includes('Files');
-
-  const extractDroppedPaths = (event: React.DragEvent): string[] => {
-    const files = Array.from(event.dataTransfer.files ?? []);
-    return files
-      .map((file) => (file as File & { path?: string }).path ?? '')
-      .filter((value) => value.length > 0);
-  };
-
-  const updateDropState = (source: 'local' | 'remote', x: number, y: number) => {
-    if (source === 'local') {
-      setLocalDropActive(false);
-      setRemoteDropActive(isPointInElement(remoteDropZoneRef.current, x, y));
-      return;
-    }
-    setRemoteDropActive(false);
-    setLocalDropActive(isPointInElement(localDropZoneRef.current, x, y));
-  };
-
-  const clearDragState = () => {
-    dragStartRef.current = null;
-    setDragInteractionActive(false);
-    setDragPayload(null);
-    setDragPointer(null);
-    setLocalDropActive(false);
-    setRemoteDropActive(false);
-  };
-
-  const startDragCandidate = useCallback(
-    (event: React.MouseEvent, payload: { source: 'local' | 'remote'; path: string; name: string }) => {
-      if (event.button !== 0) {
-        return;
-      }
-      dragStartRef.current = {
-        ...payload,
-        startX: event.clientX,
-        startY: event.clientY
-      };
-      setDragInteractionActive(true);
-    },
-    []
-  );
-
-  useEffect(() => {
-    const onMouseMove = (event: MouseEvent) => {
-      if (!dragPayload) {
-        const candidate = dragStartRef.current;
-        if (!candidate) {
-          return;
-        }
-        const distance = Math.hypot(event.clientX - candidate.startX, event.clientY - candidate.startY);
-        if (distance < 6) {
-          return;
-        }
-        const nextPayload = {
-          source: candidate.source,
-          path: candidate.path,
-          name: candidate.name
-        };
-        setDragPayload(nextPayload);
-        setDragPointer({ x: event.clientX, y: event.clientY });
-        updateDropState(nextPayload.source, event.clientX, event.clientY);
-        return;
-      }
-
-      setDragPointer({ x: event.clientX, y: event.clientY });
-      updateDropState(dragPayload.source, event.clientX, event.clientY);
-    };
-
-    const onMouseUp = (event: MouseEvent) => {
-      if (!dragPayload) {
-        dragStartRef.current = null;
-        setDragInteractionActive(false);
-        return;
-      }
-
-      if (
-        dragPayload.source === 'local' &&
-        isPointInElement(remoteDropZoneRef.current, event.clientX, event.clientY)
-      ) {
-        const entry = localEntries.find((item) => item.path === dragPayload.path);
-        if (entry) {
-          onUploadLocalEntryToRemote(entry);
-        }
-      } else if (
-        dragPayload.source === 'remote' &&
-        isPointInElement(localDropZoneRef.current, event.clientX, event.clientY)
-      ) {
-        const entry = sftpEntries.find((item) => item.path === dragPayload.path);
-        if (entry) {
-          onDownloadRemoteEntryToLocal(entry);
-        }
-      }
-
-      clearDragState();
-    };
-
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-    return () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
-  }, [dragPayload, localEntries, onDownloadRemoteEntryToLocal, onUploadLocalEntryToRemote, sftpEntries]);
-
-  useEffect(() => {
-    uploadSystemPathsToRemoteRef.current = onUploadSystemPathsToRemote;
-  }, [onUploadSystemPathsToRemote]);
-
-  useEffect(() => {
-    let disposed = false;
-    const unlisteners: Array<() => void> = [];
-
-    const bindDragDrop = async () => {
-      const unlistenEnter = await listen<{ position?: { x: number; y: number } }>(TauriEvent.DRAG_ENTER, (event) => {
-        if (!isActive || !connectedSftpProfile) {
-          setSystemRemoteDropState(false);
-          return;
-        }
-        const position = event.payload?.position;
-        if (!position) {
-          return;
-        }
-        setSystemRemoteDropState(isPointInRemoteDropZone(position.x, position.y));
-      });
-      const unlistenOver = await listen<{ position?: { x: number; y: number } }>(TauriEvent.DRAG_OVER, (event) => {
-        if (!isActive || !connectedSftpProfile) {
-          setSystemRemoteDropState(false);
-          return;
-        }
-        const position = event.payload?.position;
-        if (!position) {
-          return;
-        }
-        setSystemRemoteDropState(isPointInRemoteDropZone(position.x, position.y));
-      });
-      const unlistenLeave = await listen(TauriEvent.DRAG_LEAVE, () => {
-        setSystemRemoteDropState(false);
-      });
-      const unlistenDrop = await listen<{ position?: { x: number; y: number }; paths?: string[] }>(
-        TauriEvent.DRAG_DROP,
-        (event) => {
-          if (!isActive || !connectedSftpProfile) {
-            setSystemRemoteDropState(false);
-            return;
-          }
-          const paths = Array.isArray(event.payload?.paths) ? event.payload.paths : [];
-          const position = event.payload?.position;
-          const isOverRemote = position
-            ? isPointInRemoteDropZone(position.x, position.y)
-            : systemRemoteDropActiveRef.current;
-          setSystemRemoteDropState(false);
-          if (isOverRemote) {
-            uploadSystemPaths(paths);
-          }
-        }
-      );
-
-      if (disposed) {
-        unlistenEnter();
-        unlistenOver();
-        unlistenLeave();
-        unlistenDrop();
-        return;
-      }
-
-      unlisteners.push(unlistenEnter, unlistenOver, unlistenLeave, unlistenDrop);
-    };
-
-    void bindDragDrop();
-
-    return () => {
-      disposed = true;
-      setSystemRemoteDropState(false);
-      unlisteners.forEach((unlisten) => unlisten());
-    };
-  }, [connectedSftpProfile, isActive]);
-
-  useEffect(() => {
-    if (!isDragInteractionActive) {
-      document.body.classList.remove('sftp-transfer-dragging');
-      return;
-    }
-    document.body.classList.add('sftp-transfer-dragging');
-    return () => {
-      document.body.classList.remove('sftp-transfer-dragging');
-    };
-  }, [isDragInteractionActive]);
-
-  const formatEta = (value?: number | null) => {
-    if (value === null || value === undefined || !Number.isFinite(value)) {
-      return '计算中...';
-    }
-    if (value <= 0) {
-      return '00:00';
-    }
-    const total = Math.floor(value);
-    const hours = Math.floor(total / 3600);
-    const minutes = Math.floor((total % 3600) / 60);
-    const seconds = total % 60;
-    if (hours > 0) {
-      return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    }
-    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-  };
-
-  const renderProgress = (payload: SftpTransferProgressPayload, kind: 'upload' | 'download') => {
-    const title =
-      payload.status === 'done'
-        ? kind === 'upload'
-          ? '上传完成'
-          : '下载完成'
-        : payload.status === 'error'
-          ? kind === 'upload'
-            ? '上传失败'
-            : '下载失败'
-          : payload.status === 'canceled'
-            ? kind === 'upload'
-              ? '上传已取消'
-              : '下载已取消'
-            : kind === 'upload'
-              ? '上传中'
-              : '下载中';
-    return (
-      <div className={payload.status === 'error' ? 'transfer-progress error' : 'transfer-progress'}>
-        <p className="transfer-progress-path" title={payload.path}>
-          {payload.path}
-        </p>
-        <div className="transfer-progress-meta">
-          <span>
-            {title} {payload.percent}%
-          </span>
-          <span>
-            {formatBytes(payload.transferred_bytes)} / {formatBytes(payload.total_bytes)}
-          </span>
-        </div>
-        <div className="transfer-progress-track">
-          <div className="transfer-progress-bar" style={{ width: `${payload.percent}%` }} />
-        </div>
-        {kind === 'upload' && payload.status === 'running' && (
-          <div className="transfer-progress-actions">
-            <button
-              type="button"
-              className="transfer-progress-cancel"
-              onClick={() => onCancelUpload(payload.transfer_id)}
-            >
-              取消上传
-            </button>
-          </div>
-        )}
-        {kind === 'download' && payload.status === 'running' && (
-          <div className="transfer-progress-actions">
-            <button
-              type="button"
-              className="transfer-progress-cancel"
-              onClick={() => onCancelDownload(payload.transfer_id)}
-            >
-              取消下载
-            </button>
-          </div>
-        )}
-        {payload.status === 'running' && (
-          <p className="transfer-progress-eta">
-            预计剩余：{formatEta(payload.eta_seconds)}
-            {payload.speed_bps ? ` · ${formatBytes(payload.speed_bps)}/s` : ''}
-          </p>
-        )}
-      </div>
-    );
-  };
+  const {
+    localDropZoneRef,
+    remoteDropZoneRef,
+    isLocalDropActive,
+    isRemoteDropActive,
+    isSystemRemoteDropActive,
+    dragPayload,
+    dragPointer,
+    startDragCandidate,
+    remoteDropHandlers
+  } = useSftpDragTransfer({
+    isActive,
+    connectedSftpProfile,
+    localEntries,
+    sftpEntries,
+    onUploadSystemPathsToRemote,
+    onUploadLocalEntryToRemote,
+    onDownloadRemoteEntryToLocal
+  });
 
   const localRunningTasks = useMemo(
     () => localTransferProgresses.filter((task) => task.status === 'running'),
@@ -594,7 +239,15 @@ export function SftpView({
         </div>
 
         {localMessage && <p className="status-line">{localMessage}</p>}
-        {localPrimaryTask && renderProgress(localPrimaryTask, 'upload')}
+        {localPrimaryTask && (
+          <TransferProgressCard
+            payload={localPrimaryTask}
+            kind="upload"
+            formatBytes={formatBytes}
+            onCancelUpload={onCancelUpload}
+            onCancelDownload={onCancelDownload}
+          />
+        )}
         {localPanelButtonVisible && (
           <div className="transfer-progress-panel-action">
             <button type="button" onClick={() => setLocalTasksPanelOpen(true)}>
@@ -713,7 +366,15 @@ export function SftpView({
         </div>
 
         {sftpMessage && <p className="status-line">{sftpMessage}</p>}
-        {sftpPrimaryTask && renderProgress(sftpPrimaryTask, 'download')}
+        {sftpPrimaryTask && (
+          <TransferProgressCard
+            payload={sftpPrimaryTask}
+            kind="download"
+            formatBytes={formatBytes}
+            onCancelUpload={onCancelUpload}
+            onCancelDownload={onCancelDownload}
+          />
+        )}
         {sftpPanelButtonVisible && (
           <div className="transfer-progress-panel-action">
             <button type="button" onClick={() => setSftpTasksPanelOpen(true)}>
@@ -767,45 +428,10 @@ export function SftpView({
               </button>
             </div>
 
-              <div
+            <div
               ref={remoteDropZoneRef}
               className={isRemoteDropActive || isSystemRemoteDropActive ? 'sftp-table-wrap drag-over' : 'sftp-table-wrap'}
-              onDragEnter={(event) => {
-                if (!connectedSftpProfile || !hasDraggedFiles(event)) {
-                  return;
-                }
-                event.preventDefault();
-                setSystemRemoteDropState(true);
-              }}
-              onDragOver={(event) => {
-                if (!connectedSftpProfile || !hasDraggedFiles(event)) {
-                  return;
-                }
-                event.preventDefault();
-                setSystemRemoteDropState(true);
-              }}
-              onDragLeave={(event) => {
-                if (!connectedSftpProfile) {
-                  return;
-                }
-                event.preventDefault();
-                const relatedTarget = event.relatedTarget as Node | null;
-                if (!relatedTarget || !remoteDropZoneRef.current?.contains(relatedTarget)) {
-                  setSystemRemoteDropState(false);
-                }
-              }}
-              onDrop={(event) => {
-                if (!connectedSftpProfile) {
-                  return;
-                }
-                event.preventDefault();
-                event.stopPropagation();
-                setSystemRemoteDropState(false);
-                const droppedPaths = extractDroppedPaths(event);
-                if (droppedPaths.length > 0) {
-                  uploadSystemPaths(droppedPaths);
-                }
-              }}
+              {...remoteDropHandlers}
               onContextMenu={(event) => {
                 if (!connectedSftpProfile) {
                   return;
@@ -875,7 +501,7 @@ export function SftpView({
         runningTasks={localRunningTasks}
         completedTasks={localCompletedTransferProgresses}
         formatBytes={formatBytes}
-        formatEta={formatEta}
+        formatEta={formatTransferEta}
         onCancelTask={onCancelUpload}
         onClearCompleted={onClearLocalCompletedTransfers}
         onClose={() => setLocalTasksPanelOpen(false)}
@@ -887,7 +513,7 @@ export function SftpView({
         runningTasks={sftpRunningTasks}
         completedTasks={sftpCompletedTransferProgresses}
         formatBytes={formatBytes}
-        formatEta={formatEta}
+        formatEta={formatTransferEta}
         onCancelTask={onCancelDownload}
         onClearCompleted={onClearSftpCompletedTransfers}
         onClose={() => setSftpTasksPanelOpen(false)}
