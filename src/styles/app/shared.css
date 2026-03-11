@@ -1,0 +1,250 @@
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.section-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.section-actions.center {
+  justify-content: center;
+}
+
+input,
+textarea,
+select,
+button {
+  border: 1px solid #445a7f;
+  border-radius: 8px;
+  background: #1b2840;
+  color: var(--text);
+  padding: 8px 10px;
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+button {
+  padding: 5px 10px;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  border-radius: 7px;
+  cursor: default;
+}
+
+.sftp-profile-select {
+  font-size: 0.82rem;
+  line-height: 1.25;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+button.danger {
+  border-color: #7a4257;
+  background: #3a1d29;
+}
+
+.status-line {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  word-break: break-word;
+}
+
+.status-line.error {
+  color: var(--danger);
+}
+
+.transfer-progress {
+  display: grid;
+  gap: 4px;
+}
+
+.transfer-progress-list {
+  display: grid;
+  gap: 6px;
+}
+
+.transfer-progress-panel-action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.transfer-progress-path {
+  margin: 0;
+  color: #8fa4cb;
+  font-size: 0.76rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transfer-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #9fb0d2;
+  font-size: 0.8rem;
+}
+
+.transfer-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  border: 1px solid #344b70;
+  background: #1c2944;
+  overflow: hidden;
+}
+
+.transfer-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #3b88ff, #2dc6ff);
+  transition: width 120ms linear;
+}
+
+.transfer-progress-eta {
+  margin: 0;
+  color: #8fa4cb;
+  font-size: 0.76rem;
+}
+
+.transfer-progress-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.transfer-progress-cancel {
+  padding: 2px 8px;
+  font-size: 0.74rem;
+  border-color: #7a4257;
+  background: #3a1d29;
+}
+
+.transfer-progress.error .transfer-progress-bar {
+  background: linear-gradient(90deg, #d64f6a, #ef6b82);
+}
+
+.transfer-tasks-modal {
+  width: min(760px, calc(100vw - 24px));
+}
+
+.transfer-tasks-modal-body {
+  display: grid;
+  gap: 12px;
+  max-height: min(70vh, 640px);
+  overflow: auto;
+}
+
+.transfer-task-section {
+  display: grid;
+  gap: 8px;
+}
+
+.transfer-task-section h4 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #c4d2ea;
+}
+
+.transfer-task-list {
+  display: grid;
+  gap: 8px;
+}
+
+.host-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
+}
+
+.host-card {
+  border: 1px solid #4c607e;
+  border-radius: 12px;
+  background: var(--panel-2);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.local-terminal-card {
+  border-color: #3f7f65;
+  background: linear-gradient(135deg, #243849 0%, #1b3b34 100%);
+}
+
+.local-terminal-meta {
+  color: #afc3db;
+}
+
+.host-empty {
+  min-height: 100px;
+}
+
+.host-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.host-card-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.host-card-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.chip {
+  border: 1px solid #667ea6;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #cfdae9;
+  font-size: 0.74rem;
+}
+
+.field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.field-error-text {
+  color: #f6a5af;
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.card-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.editor-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+

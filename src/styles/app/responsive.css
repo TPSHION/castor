@@ -1,0 +1,154 @@
+@media (max-width: 900px) {
+  .window-body {
+    padding: 10px;
+  }
+
+  .servers-page,
+  .sftp-dual-page {
+    grid-template-columns: 1fr;
+  }
+
+  :root {
+    --dir-panel-height: 420px;
+  }
+
+  .window-body.sftp-body {
+    padding: 0;
+  }
+
+  .sftp-pane {
+    padding: 0;
+  }
+
+  .sftp-pane + .sftp-pane {
+    border-left: 0;
+    border-top: 1px solid #445a7f;
+    margin-top: 0;
+    padding-left: 0;
+    padding-top: 0;
+  }
+
+  .sftp-pane > .sftp-pane-header,
+  .sftp-pane > .sftp-path-bar,
+  .sftp-pane > .status-line,
+  .sftp-pane > .transfer-progress,
+  .sftp-pane > .transfer-progress-list,
+  .sftp-pane > .transfer-progress-panel-action,
+  .sftp-pane > .empty-state,
+  .sftp-pane > .sftp-remote-body > .sftp-path-bar {
+    margin-inline: 4px;
+  }
+
+  .servers-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    flex-direction: row;
+    align-items: center;
+    padding: 4px 6px;
+  }
+
+  .servers-sidebar-brand {
+    display: none;
+  }
+
+  .servers-sidebar-menu {
+    width: 100%;
+    display: flex;
+    gap: 6px;
+  }
+
+  .servers-sidebar-title {
+    white-space: nowrap;
+  }
+
+  .servers-nav-btn {
+    width: auto;
+    flex: 1 1 0;
+  }
+
+  .host-grid,
+  .editor-grid,
+  .environment-runtime-grid,
+  .systemd-service-grid,
+  .systemd-detail-grid,
+  .systemd-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .header-pill,
+  .header-action {
+    padding: 3px 7px;
+  }
+
+  .session-tab {
+    min-width: 84px;
+    max-width: 160px;
+  }
+
+  .tab-title {
+    max-width: 82px;
+  }
+
+  .environment-runtime-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .environment-runtime-match-version {
+    white-space: normal;
+    padding-top: 0;
+  }
+
+  .environment-runtime-match-meta {
+    justify-self: start;
+  }
+
+  .environment-deploy-runtime-panels {
+    grid-template-columns: 1fr;
+  }
+
+  .environment-runtime-matches li {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}
+
+@media (max-width: 640px) {
+  .connect-page {
+    padding: 12px;
+  }
+
+  .connect-node {
+    width: 34px;
+    height: 34px;
+  }
+
+  .connect-track {
+    height: 5px;
+  }
+
+  .section-actions {
+    width: 100%;
+  }
+
+  .section-actions button {
+    flex: 1;
+  }
+
+  .terminal-pane {
+    padding: 4px 0 4px 4px;
+  }
+
+  .editor-modal-overlay {
+    padding: 8px;
+  }
+
+  .editor-modal {
+    max-height: 92vh;
+  }
+
+}

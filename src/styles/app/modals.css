@@ -1,0 +1,263 @@
+.editor-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.editor-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgb(9 14 26 / 64%);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.editor-modal {
+  width: min(760px, 100%);
+  max-height: min(86vh, 900px);
+  border: 1px solid #51648b;
+  border-radius: 12px;
+  background: #1a253f;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+}
+
+.editor-modal-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid #32466f;
+  background: #202f50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.editor-modal-header h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.editor-modal-body {
+  padding: 12px;
+  overflow: auto;
+  display: grid;
+  gap: 10px;
+}
+
+.editor-modal-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.editor-modal-footer {
+  padding: 10px 12px;
+  border-top: 1px solid #32466f;
+  background: #1c2946;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sftp-action-modal {
+  width: min(420px, 100%);
+}
+
+.sftp-action-modal-body {
+  min-height: 140px;
+}
+
+.sftp-action-copy {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.sftp-action-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.sftp-permissions-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.sftp-permissions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #c7d5ee;
+  font-size: 0.84rem;
+}
+
+.sftp-permissions-header code {
+  border: 1px solid #49608a;
+  border-radius: 6px;
+  padding: 2px 8px;
+  background: #18243e;
+  color: #e7efff;
+  font-size: 0.85rem;
+}
+
+.sftp-permissions-grid {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) repeat(3, minmax(66px, 1fr));
+  gap: 6px;
+  align-items: center;
+}
+
+.sftp-permissions-grid-head {
+  color: #9fb0d2;
+  font-size: 0.78rem;
+}
+
+.sftp-permissions-role {
+  color: #c7d5ee;
+  font-size: 0.83rem;
+}
+
+.sftp-permissions-toggle {
+  display: grid;
+  place-items: center;
+}
+
+.sftp-permissions-toggle input,
+.sftp-permissions-special input {
+  width: 16px;
+  height: 16px;
+}
+
+.sftp-permissions-special {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: #afc3df;
+  font-size: 0.8rem;
+}
+
+.sftp-permissions-special label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sftp-permissions-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  border: 1px solid #5f78a4;
+  color: #b9cae9;
+  font-size: 0.68rem;
+  line-height: 1;
+  cursor: default;
+}
+
+.quick-connect-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 68;
+  background: rgb(9 14 26 / 64%);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.quick-connect-modal {
+  width: min(560px, 100%);
+  max-height: min(80vh, 760px);
+  border: 1px solid #51648b;
+  border-radius: 12px;
+  background: #1a253f;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
+
+.quick-connect-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid #32466f;
+  background: #202f50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quick-connect-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.quick-connect-body {
+  padding: 10px 12px 12px;
+  overflow: auto;
+}
+
+.quick-connect-shortcuts {
+  margin-bottom: 10px;
+}
+
+.quick-connect-local {
+  width: 100%;
+  border-color: #348d61;
+  background: #173a2f;
+  color: #c8f3df;
+}
+
+.quick-connect-local:hover {
+  border-color: #46ac79;
+  background: #1f4a3c;
+}
+
+.quick-connect-list {
+  display: grid;
+  gap: 8px;
+}
+
+.quick-connect-item {
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid #465b84;
+  background: #1b2843;
+  display: grid;
+  gap: 3px;
+}
+
+.quick-connect-item:hover {
+  border-color: #5a79ad;
+  background: #223458;
+}
+
+.quick-connect-name {
+  color: #eff4ff;
+  font-size: 0.88rem;
+}
+
+.quick-connect-meta {
+  color: #9eabc6;
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-grid {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+

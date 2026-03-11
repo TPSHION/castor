@@ -1,0 +1,260 @@
+:root {
+  color-scheme: dark;
+  --bg: #111827;
+  --header-bg: #121a35;
+  --header-border: #2a3657;
+  --panel: #1f2738;
+  --panel-2: #2f3a4f;
+  --border: #425273;
+  --text: #ecf0fb;
+  --muted: #a7b0c7;
+  --accent: #38a6ff;
+  --ok: #1bd181;
+  --danger: #ef6b82;
+  --radius: 12px;
+  --dir-panel-height: 520px;
+  --sftp-body-scrollbar-width: 0px;
+  --mac-titlebar-left-inset: 86px;
+  --mac-titlebar-top-offset: 2px;
+  font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+body.sftp-transfer-dragging {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.window-shell {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.window-header {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--header-border);
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-app-region: drag;
+}
+
+.header-drag-region {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.window-header > :not(.header-drag-region) {
+  position: relative;
+  z-index: 1;
+}
+
+body.window-titlebar-overlay .window-header {
+  padding-top: var(--mac-titlebar-top-offset);
+  padding-left: var(--mac-titlebar-left-inset);
+  padding-bottom: 2px;
+  min-height: 36px;
+}
+
+body.window-titlebar-overlay.window-fullscreen .window-header {
+  padding-left: 10px;
+}
+
+body.window-titlebar-overlay .header-functions {
+  margin-left: 4px;
+}
+
+.header-functions,
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.header-pill,
+.header-action {
+  border: 1px solid #36446a;
+  background: #26324d;
+  color: #ccd4e4;
+  border-radius: 9px;
+  padding: 3px 8px;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  cursor: default;
+}
+
+.header-pill.active {
+  border-color: #4f7ec9;
+  background: #2c4571;
+  color: #ecf2ff;
+}
+
+.header-plus {
+  border: 0;
+  background: transparent;
+  color: #bcc4d6;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: default;
+}
+
+.header-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding-bottom: 0;
+}
+
+.window-header button,
+.window-header input,
+.window-header select,
+.window-header textarea,
+.window-header [role='button'] {
+  -webkit-app-region: no-drag;
+}
+
+.header-drag-handle {
+  flex: 0 0 28px;
+  align-self: stretch;
+  -webkit-app-region: drag;
+}
+
+.session-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #3b527f;
+  border-radius: 9px;
+  background: #1f2d4e;
+  color: #d0dbef;
+  padding: 3px 7px;
+  min-width: 84px;
+  max-width: 180px;
+  font-size: 0.78rem;
+  cursor: default;
+  flex-shrink: 0;
+}
+
+.session-tab.active {
+  border-color: #29b184;
+  background: #16483f;
+  color: #2de292;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #8a95ad;
+  flex-shrink: 0;
+}
+
+.dot.connecting {
+  background: var(--accent);
+  box-shadow: 0 0 0 6px rgb(56 166 255 / 20%);
+}
+
+.dot.connected {
+  background: var(--ok);
+}
+
+.dot.error,
+.dot.closed {
+  background: var(--danger);
+}
+
+.tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-close {
+  color: #aeb7cb;
+  font-size: 0.82rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.window-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+.window-body.workspace-body {
+  padding: 0;
+  overflow: hidden;
+  background: #c9ced3;
+}
+
+.window-body.servers-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.window-body.servers-body > .view-page {
+  height: 100%;
+  min-height: 0;
+}
+
+.window-body.sftp-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.window-body.sftp-body > .view-page {
+  height: 100%;
+  min-height: 0;
+}
+
+.view-page {
+  min-height: 100%;
+}
+
+.view-page.hidden {
+  display: none;
+}
+
+.workspace-page {
+  height: 100%;
+}
+
