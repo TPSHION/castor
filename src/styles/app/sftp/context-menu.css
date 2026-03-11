@@ -1,0 +1,56 @@
+.sftp-context-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 66;
+  pointer-events: none;
+}
+
+.sftp-context-menu {
+  position: fixed;
+  width: 200px;
+  border: 1px solid rgb(82 101 137 / 80%);
+  border-radius: 9px;
+  background: rgb(24 34 56 / 96%);
+  box-shadow: 0 18px 50px rgb(4 8 16 / 42%);
+  padding: 4px;
+  display: grid;
+  gap: 1px;
+  pointer-events: auto;
+  backdrop-filter: blur(12px);
+}
+
+.sftp-context-action {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #e7efff;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 8px;
+  text-align: left;
+  font-size: 0.79rem;
+  line-height: 1.2;
+}
+
+.sftp-context-action:hover:not(:disabled) {
+  background: rgb(74 115 184 / 24%);
+}
+
+.sftp-context-action.danger {
+  color: #ff7d87;
+}
+
+.sftp-context-meta {
+  color: #8ea7d2;
+  font-size: 0.69rem;
+}
+
+.sftp-context-separator {
+  height: 1px;
+  margin: 1px 4px;
+  background: rgb(102 123 160 / 38%);
+}
+
