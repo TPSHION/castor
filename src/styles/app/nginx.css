@@ -1,0 +1,138 @@
+.nginx-config-codemirror-shell {
+  border: 1px solid #3f5377;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #121c31;
+  min-height: 520px;
+}
+
+.nginx-config-codemirror-shell .cm-editor {
+  height: 520px;
+  background: #121c31;
+  color: #d5e4ff;
+  font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.nginx-config-codemirror-shell .cm-focused {
+  outline: none;
+}
+
+.nginx-config-codemirror-shell .cm-scroller {
+  font-family: inherit;
+}
+
+.nginx-config-codemirror-shell .cm-gutters {
+  background: #10192d;
+  border-right: 1px solid #2f4366;
+  color: #6f87b3;
+  font-size: 0.76rem;
+  padding-right: 6px;
+}
+
+.nginx-config-codemirror-shell .cm-lineNumbers .cm-gutterElement {
+  padding: 0 4px 0 0;
+}
+
+.nginx-config-codemirror-shell .cm-content {
+  tab-size: 2;
+  caret-color: #d5e4ff;
+}
+
+.nginx-config-codemirror-shell .cm-selectionBackground {
+  background: rgb(95 147 221 / 32%);
+}
+
+.nginx-config-codemirror-shell .cm-placeholder {
+  color: #7f94b9;
+}
+
+.nginx-config-editor-loading {
+  min-height: 520px;
+  border: 1px solid #3f5377;
+  border-radius: 10px;
+  background: #121c31;
+  color: #95aad0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.84rem;
+}
+
+.nginx-config-validation-log {
+  margin: 0;
+  border: 1px solid #5c2b2b;
+  border-radius: 8px;
+  background: #221417;
+  color: #ffc9c9;
+  font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.nginx-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 120;
+  width: min(420px, calc(100vw - 24px));
+  border-radius: 10px;
+  border: 1px solid transparent;
+  padding: 10px 10px 10px 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  box-shadow: 0 12px 24px rgb(9 12 19 / 38%);
+}
+
+.nginx-toast-success {
+  border-color: #285a42;
+  background: #172c24;
+}
+
+.nginx-toast-error {
+  border-color: #6d3138;
+  background: #2e171b;
+}
+
+.nginx-toast-body {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.nginx-toast-title {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #dce8ff;
+}
+
+.nginx-toast-message {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #bdd0f3;
+  word-break: break-word;
+}
+
+.nginx-toast-close {
+  align-self: start;
+  border-color: #445a7f;
+  background: #1b2840;
+  color: #d7e4fb;
+  font-size: 0.74rem;
+  padding: 4px 8px;
+}
+
+@media (min-width: 901px) {
+  .nginx-detail-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

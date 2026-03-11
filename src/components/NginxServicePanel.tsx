@@ -1,5 +1,8 @@
+import { Suspense, lazy, useCallback, useEffect } from 'react';
 import type { ConnectionProfile, NginxService } from '../types';
 import { useNginxServices } from '../app/hooks/useNginxServices';
+
+const NginxConfigEditor = lazy(() => import('./nginx/NginxConfigEditor'));
 
 type NginxServicePanelProps = {
   profiles: ConnectionProfile[];
@@ -7,6 +10,33 @@ type NginxServicePanelProps = {
 
 export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
   const vm = useNginxServices(profiles);
+
+  const triggerConfigSave = useCallback(() => {
+    if (vm.nginxConfigEditorBusy || !vm.nginxConfigDirty || !vm.selectedNginxConfigService) {
+      return;
+    }
+    void vm.onSaveNginxConfigFile();
+  }, [vm.nginxConfigDirty, vm.nginxConfigEditorBusy, vm.onSaveNginxConfigFile, vm.selectedNginxConfigService]);
+
+  useEffect(() => {
+    if (vm.nginxMode !== 'config') {
+      return;
+    }
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) {
+        return;
+      }
+      if (event.key.toLowerCase() !== 's') {
+        return;
+      }
+      event.preventDefault();
+      triggerConfigSave();
+    };
+    window.addEventListener('keydown', onWindowKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onWindowKeyDown);
+    };
+  }, [triggerConfigSave, vm.nginxMode]);
 
   return (
     <section className={vm.nginxMode === 'list' ? 'systemd-panel' : 'systemd-panel systemd-panel-form'}>
@@ -37,6 +67,7 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
                   profileLabel={vm.profileNameMap.get(service.profile_id) ?? '未知服务器'}
                   busy={vm.nginxBusy}
                   onOpenDetail={vm.onOpenNginxDetail}
+                  onOpenConfig={(target) => vm.onOpenNginxConfig(target, 'list')}
                   onEdit={vm.onEditNginx}
                   onDelete={vm.requestDeleteNginx}
                 />
@@ -115,6 +146,13 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
                   </button>
                   <button
                     type="button"
+                    onClick={() => vm.onOpenNginxConfig(vm.selectedNginxDetailService!, 'detail')}
+                    disabled={vm.detailActionDisabled}
+                  >
+                    配置页面
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => void vm.refreshNginxDetailStatus(vm.selectedNginxDetailService!.id)}
                     disabled={vm.detailActionDisabled}
                   >
@@ -139,7 +177,7 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
             {!vm.selectedNginxDetailService ? (
               <div className="empty-state">服务不存在或已删除，请返回列表刷新。</div>
             ) : (
-              <div className="systemd-detail-grid">
+              <div className="systemd-detail-grid nginx-detail-grid">
                 <article className="host-card">
                   <header className="host-card-header">
                     <div>
@@ -174,7 +212,7 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
                   )}
                 </article>
 
-                <article className="host-card systemd-detail-code-card">
+                <article className="host-card">
                   <header className="host-card-header">
                     <div>
                       <h3>最近一次配置检测</h3>
@@ -211,6 +249,106 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
                   ) : (
                     <p className="systemd-service-meta">暂无操作日志，执行操作后会在这里显示输出。</p>
                   )}
+                </article>
+              </div>
+            )}
+          </div>
+        </>
+      ) : vm.nginxMode === 'config' ? (
+        <>
+          <div className="systemd-form-header">
+            <button
+              type="button"
+              className="systemd-back-icon-btn"
+              onClick={vm.onBackNginxConfig}
+              disabled={vm.nginxConfigEditorBusy}
+              aria-label="返回"
+              title="返回"
+            >
+              <svg className="systemd-back-icon" viewBox="0 0 16 16" aria-hidden="true">
+                <path
+                  d="M10.5 3.5L6 8l4.5 4.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span className="systemd-back-label">返回</span>
+            </button>
+            <h2>nginx 配置展示</h2>
+            <div className="section-actions">
+              <button type="button" onClick={() => void vm.onReloadNginxConfigFile()} disabled={vm.nginxConfigEditorBusy}>
+                {vm.nginxConfigLoading ? '加载中...' : '重新加载'}
+              </button>
+              <button
+                type="button"
+                onClick={vm.onResetNginxConfigContent}
+                disabled={vm.nginxConfigEditorBusy || !vm.nginxConfigDirty}
+              >
+                还原修改
+              </button>
+              <button
+                type="button"
+                onClick={() => void vm.onSaveNginxConfigFile()}
+                disabled={vm.nginxConfigEditorBusy || !vm.nginxConfigDirty || !vm.selectedNginxConfigService}
+              >
+                {vm.nginxConfigSaving ? '保存中...' : '保存配置'}
+              </button>
+            </div>
+          </div>
+
+          <div className="systemd-form-scroll">
+            {vm.nginxMessage && <p className={vm.nginxMessageIsError ? 'status-line error' : 'status-line'}>{vm.nginxMessage}</p>}
+
+            {!vm.selectedNginxConfigService ? (
+              <div className="empty-state">服务不存在或已删除，请返回列表刷新。</div>
+            ) : (
+              <div className="systemd-detail-grid">
+                <article className="host-card">
+                  <header className="host-card-header">
+                    <div>
+                      <h3>{vm.selectedNginxConfigService.name}</h3>
+                      <p>{vm.profileNameMap.get(vm.selectedNginxConfigService.profile_id) ?? '未知服务器'}</p>
+                    </div>
+                  </header>
+                  <p className="systemd-service-meta">nginx 命令：{vm.selectedNginxConfigService.nginx_bin}</p>
+                  <p className="systemd-service-meta">配置文件：{vm.nginxConfigSourcePath || vm.selectedNginxConfigService.conf_path || '-'}</p>
+                  <p className="systemd-service-meta">sudo：{vm.selectedNginxConfigService.use_sudo ? '是' : '否'}</p>
+                  <p className="systemd-service-meta">
+                    最近加载：{vm.nginxConfigLoadedAt ? new Date(vm.nginxConfigLoadedAt * 1000).toLocaleString() : '-'}
+                  </p>
+                  <p className="systemd-service-meta">状态：{vm.nginxConfigDirty ? '有未保存修改' : '已保存'}</p>
+                </article>
+
+                {vm.nginxConfigValidationErrorDetail && (
+                  <article className="host-card">
+                    <header className="host-card-header">
+                      <div>
+                        <h3>校验失败详情</h3>
+                        <p>保存前 `nginx -t` 返回输出</p>
+                      </div>
+                    </header>
+                    <pre className="nginx-config-validation-log">{vm.nginxConfigValidationErrorDetail}</pre>
+                  </article>
+                )}
+
+                <article className="host-card systemd-detail-code-card">
+                  <header className="host-card-header">
+                    <div>
+                      <h3>配置文件编辑器</h3>
+                      <p>CodeMirror 编辑器，支持行号、Ctrl/Cmd+S 保存</p>
+                    </div>
+                  </header>
+                  <Suspense fallback={<div className="nginx-config-editor-loading">编辑器加载中...</div>}>
+                    <NginxConfigEditor
+                      value={vm.nginxConfigContent}
+                      busy={vm.nginxConfigEditorBusy}
+                      loading={vm.nginxConfigLoading}
+                      onChange={vm.setNginxConfigContent}
+                    />
+                  </Suspense>
                 </article>
               </div>
             )}
@@ -367,6 +505,22 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
           </div>
         </div>
       )}
+
+      {vm.nginxToast && (
+        <div
+          className={vm.nginxToast.kind === 'error' ? 'nginx-toast nginx-toast-error' : 'nginx-toast nginx-toast-success'}
+          role={vm.nginxToast.kind === 'error' ? 'alert' : 'status'}
+          aria-live={vm.nginxToast.kind === 'error' ? 'assertive' : 'polite'}
+        >
+          <div className="nginx-toast-body">
+            <p className="nginx-toast-title">{vm.nginxToast.kind === 'error' ? '操作失败' : '操作成功'}</p>
+            <p className="nginx-toast-message">{vm.nginxToast.message}</p>
+          </div>
+          <button type="button" className="nginx-toast-close" onClick={vm.dismissNginxToast} aria-label="关闭提示">
+            关闭
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -376,13 +530,32 @@ type NginxServiceCardProps = {
   profileLabel: string;
   busy: boolean;
   onOpenDetail: (service: NginxService) => void;
+  onOpenConfig: (service: NginxService) => void;
   onEdit: (service: NginxService) => void;
   onDelete: (service: NginxService) => void;
 };
 
-function NginxServiceCard({ service, profileLabel, busy, onOpenDetail, onEdit, onDelete }: NginxServiceCardProps) {
+function NginxServiceCard({ service, profileLabel, busy, onOpenDetail, onOpenConfig, onEdit, onDelete }: NginxServiceCardProps) {
   return (
-    <article className={busy ? 'host-card systemd-service-card' : 'host-card systemd-service-card clickable'}>
+    <article
+      className={busy ? 'host-card systemd-service-card' : 'host-card systemd-service-card clickable'}
+      role="button"
+      tabIndex={busy ? -1 : 0}
+      onClick={() => {
+        if (!busy) {
+          onOpenDetail(service);
+        }
+      }}
+      onKeyDown={(event) => {
+        if (busy) {
+          return;
+        }
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onOpenDetail(service);
+        }
+      }}
+    >
       <header className="host-card-header">
         <div>
           <h3>{service.name}</h3>
@@ -395,13 +568,45 @@ function NginxServiceCard({ service, profileLabel, busy, onOpenDetail, onEdit, o
       <p className="systemd-service-meta">sudo：{service.use_sudo ? '是' : '否'}</p>
 
       <div className="card-actions">
-        <button type="button" onClick={() => onOpenDetail(service)} disabled={busy}>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenDetail(service);
+          }}
+          disabled={busy}
+        >
           详情
         </button>
-        <button type="button" onClick={() => onEdit(service)} disabled={busy}>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenConfig(service);
+          }}
+          disabled={busy}
+        >
+          配置
+        </button>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onEdit(service);
+          }}
+          disabled={busy}
+        >
           编辑
         </button>
-        <button type="button" className="danger" onClick={() => void onDelete(service)} disabled={busy}>
+        <button
+          type="button"
+          className="danger"
+          onClick={(event) => {
+            event.stopPropagation();
+            void onDelete(service);
+          }}
+          disabled={busy}
+        >
           删除
         </button>
       </div>

@@ -6,12 +6,27 @@ import {
   getNginxServiceStatus,
   importNginxServiceByParams,
   listNginxServices,
+  readNginxServiceConfigFile,
+  saveNginxServiceConfigFile,
   testNginxServiceConfig,
+  validateNginxServiceConfigContent,
   upsertNginxService
 } from '../api/profiles';
 import { formatInvokeError } from '../helpers';
-import type { ConnectionProfile, NginxControlAction, NginxConfigTestResult, NginxService, NginxServiceStatus } from '../../types';
+import type {
+  ConnectionProfile,
+  NginxControlAction,
+  NginxConfigTestResult,
+  NginxService,
+  NginxServiceStatus
+} from '../../types';
 import type { NginxFormState, NginxMode } from '../../components/nginx/types';
+
+type NginxToast = {
+  id: number;
+  kind: 'success' | 'error';
+  message: string;
+};
 
 function createNginxForm(profile?: ConnectionProfile | null): NginxFormState {
   return {
@@ -83,13 +98,35 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
   const [nginxMessage, setNginxMessage] = useState<string | null>(null);
   const [nginxMessageIsError, setNginxMessageIsError] = useState(false);
   const [nginxDetailServiceId, setNginxDetailServiceId] = useState<string | null>(null);
+  const [nginxConfigServiceId, setNginxConfigServiceId] = useState<string | null>(null);
+  const [nginxConfigReturnMode, setNginxConfigReturnMode] = useState<'list' | 'detail'>('list');
   const [nginxDetailStatus, setNginxDetailStatus] = useState<NginxServiceStatus | null>(null);
   const [nginxDetailStatusBusy, setNginxDetailStatusBusy] = useState(false);
   const [nginxDetailAction, setNginxDetailAction] = useState<NginxControlAction | null>(null);
   const [nginxConfigTesting, setNginxConfigTesting] = useState(false);
+  const [nginxConfigLoading, setNginxConfigLoading] = useState(false);
+  const [nginxConfigSaving, setNginxConfigSaving] = useState(false);
+  const [nginxConfigSourcePath, setNginxConfigSourcePath] = useState('');
+  const [nginxConfigContent, setNginxConfigContent] = useState('');
+  const [nginxConfigOriginalContent, setNginxConfigOriginalContent] = useState('');
+  const [nginxConfigLoadedAt, setNginxConfigLoadedAt] = useState<number | null>(null);
+  const [nginxConfigValidationErrorDetail, setNginxConfigValidationErrorDetail] = useState<string | null>(null);
   const [nginxLastConfigTestResult, setNginxLastConfigTestResult] = useState<NginxConfigTestResult | null>(null);
   const [nginxOperationLogs, setNginxOperationLogs] = useState<string[]>([]);
   const [nginxDeleteTarget, setNginxDeleteTarget] = useState<NginxService | null>(null);
+  const [nginxToast, setNginxToast] = useState<NginxToast | null>(null);
+
+  const showNginxToast = useCallback((kind: NginxToast['kind'], message: string) => {
+    setNginxToast({
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      kind,
+      message
+    });
+  }, []);
+
+  const dismissNginxToast = useCallback(() => {
+    setNginxToast(null);
+  }, []);
 
   const appendNginxOperationLog = useCallback((title: string, output?: string) => {
     const now = new Date().toLocaleString();
@@ -99,6 +136,16 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
       : `[${now}] ${title}\n(无输出)`;
     setNginxOperationLogs((previous) => [...previous, entry].slice(-200));
   }, []);
+
+  useEffect(() => {
+    if (!nginxToast) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setNginxToast((current) => (current && current.id === nginxToast.id ? null : current));
+    }, 3200);
+    return () => window.clearTimeout(timer);
+  }, [nginxToast]);
 
   const profileNameMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -117,6 +164,23 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     () => nginxServices.find((item) => item.id === nginxDetailServiceId) ?? null,
     [nginxDetailServiceId, nginxServices]
   );
+
+  const selectedNginxConfigService = useMemo(
+    () => nginxServices.find((item) => item.id === nginxConfigServiceId) ?? null,
+    [nginxConfigServiceId, nginxServices]
+  );
+
+  const nginxConfigDirty = nginxConfigContent !== nginxConfigOriginalContent;
+
+  const resetNginxConfigEditor = useCallback(() => {
+    setNginxConfigLoading(false);
+    setNginxConfigSaving(false);
+    setNginxConfigSourcePath('');
+    setNginxConfigContent('');
+    setNginxConfigOriginalContent('');
+    setNginxConfigLoadedAt(null);
+    setNginxConfigValidationErrorDetail(null);
+  }, []);
 
   const duplicateNginxName = useMemo(() => {
     const normalized = nginxForm.name.trim().toLowerCase();
@@ -190,6 +254,7 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
 
   const onStartCreateNginx = () => {
     setNginxLastConfigTestResult(null);
+    resetNginxConfigEditor();
     setNginxMessage(null);
     setNginxMessageIsError(false);
     setNginxForm(createNginxForm(profiles[0] ?? null));
@@ -198,6 +263,7 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
 
   const onEditNginx = (service: NginxService) => {
     setNginxLastConfigTestResult(null);
+    resetNginxConfigEditor();
     setNginxMessage(null);
     setNginxMessageIsError(false);
     setNginxForm(toNginxForm(service));
@@ -220,6 +286,7 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
 
   const onOpenNginxDetail = (service: NginxService) => {
     setNginxLastConfigTestResult(null);
+    resetNginxConfigEditor();
     setNginxOperationLogs([]);
     setNginxMessage(null);
     setNginxMessageIsError(false);
@@ -228,11 +295,55 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     void refreshNginxDetailStatus(service.id);
   };
 
+  const loadNginxConfigFile = useCallback(async (serviceId: string) => {
+    setNginxConfigLoading(true);
+    setNginxConfigValidationErrorDetail(null);
+    setNginxMessage(null);
+    setNginxMessageIsError(false);
+    try {
+      const result = await readNginxServiceConfigFile({ id: serviceId });
+      setNginxConfigSourcePath(result.source_path);
+      setNginxConfigContent(result.content);
+      setNginxConfigOriginalContent(result.content);
+      setNginxConfigLoadedAt(result.loaded_at);
+      setNginxMessage(`已加载配置文件：${result.source_path}`);
+      setNginxMessageIsError(false);
+    } catch (invokeError) {
+      resetNginxConfigEditor();
+      setNginxMessage(`读取 nginx 配置文件失败：${formatInvokeError(invokeError)}`);
+      setNginxMessageIsError(true);
+    } finally {
+      setNginxConfigLoading(false);
+    }
+  }, [resetNginxConfigEditor]);
+
+  const onOpenNginxConfig = useCallback(
+    (service: NginxService, returnMode: 'list' | 'detail' = 'list') => {
+      setNginxConfigServiceId(service.id);
+      setNginxConfigReturnMode(returnMode);
+      resetNginxConfigEditor();
+      setNginxMessage(null);
+      setNginxMessageIsError(false);
+      setNginxMode('config');
+      void loadNginxConfigFile(service.id);
+    },
+    [loadNginxConfigFile, resetNginxConfigEditor]
+  );
+
+  const onBackNginxConfig = useCallback(() => {
+    resetNginxConfigEditor();
+    setNginxMessage(null);
+    setNginxMessageIsError(false);
+    setNginxMode(nginxConfigReturnMode);
+  }, [nginxConfigReturnMode, resetNginxConfigEditor]);
+
   const onBackNginxList = () => {
     setNginxDetailServiceId(null);
+    setNginxConfigServiceId(null);
     setNginxDetailStatus(null);
     setNginxDetailAction(null);
     setNginxConfigTesting(false);
+    resetNginxConfigEditor();
     setNginxLastConfigTestResult(null);
     setNginxOperationLogs([]);
     setNginxMode('list');
@@ -338,11 +449,14 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
       });
       setNginxMessage(`已导入 nginx 服务：${saved.name}`);
       setNginxMessageIsError(false);
+      showNginxToast('success', `已导入 nginx 服务：${saved.name}`);
       setNginxMode('list');
       await refreshNginxList();
     } catch (invokeError) {
-      setNginxMessage(`参数导入失败：${formatInvokeError(invokeError)}`);
+      const errorText = formatInvokeError(invokeError);
+      setNginxMessage(`参数导入失败：${errorText}`);
       setNginxMessageIsError(true);
+      showNginxToast('error', `参数导入失败：${errorText}`);
     } finally {
       setNginxBusy(false);
     }
@@ -370,11 +484,14 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
       });
       setNginxMessage(`已保存 nginx 服务：${saved.name}`);
       setNginxMessageIsError(false);
+      showNginxToast('success', `已保存 nginx 服务：${saved.name}`);
       setNginxMode('list');
       await refreshNginxList();
     } catch (invokeError) {
-      setNginxMessage(`保存失败：${formatInvokeError(invokeError)}`);
+      const errorText = formatInvokeError(invokeError);
+      setNginxMessage(`保存失败：${errorText}`);
       setNginxMessageIsError(true);
+      showNginxToast('error', `保存失败：${errorText}`);
     } finally {
       setNginxBusy(false);
     }
@@ -400,8 +517,15 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
       await deleteNginxService({ id: service.id });
       setNginxMessage(`已删除 nginx 服务：${service.name}`);
       setNginxMessageIsError(false);
-      if (nginxMode === 'detail') {
+      if (nginxMode === 'detail' || nginxMode === 'config') {
         setNginxMode('list');
+      }
+      if (nginxDetailServiceId === service.id) {
+        setNginxDetailServiceId(null);
+      }
+      if (nginxConfigServiceId === service.id) {
+        setNginxConfigServiceId(null);
+        resetNginxConfigEditor();
       }
       await refreshNginxList();
     } catch (invokeError) {
@@ -481,15 +605,76 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     }
   }, [appendNginxOperationLog, selectedNginxDetailService]);
 
+  const onReloadNginxConfigFile = useCallback(async () => {
+    if (!selectedNginxConfigService) {
+      return;
+    }
+    await loadNginxConfigFile(selectedNginxConfigService.id);
+  }, [loadNginxConfigFile, selectedNginxConfigService]);
+
+  const onSaveNginxConfigFile = useCallback(async () => {
+    if (!selectedNginxConfigService) {
+      return;
+    }
+
+    setNginxConfigSaving(true);
+    setNginxConfigValidationErrorDetail(null);
+    setNginxMessage(null);
+    setNginxMessageIsError(false);
+    try {
+      const validation = await validateNginxServiceConfigContent({
+        id: selectedNginxConfigService.id,
+        content: nginxConfigContent
+      });
+      setNginxLastConfigTestResult(validation);
+      if (!validation.success) {
+        const detail = [validation.stderr.trim(), validation.stdout.trim()]
+          .filter((item) => item.length > 0)
+          .join('\n');
+        setNginxConfigValidationErrorDetail(detail || '校验失败，但未返回具体输出。');
+        setNginxMessage(`保存前配置校验失败（exit=${validation.exit_status}），已阻止保存`);
+        setNginxMessageIsError(true);
+        showNginxToast('error', `配置校验失败（exit=${validation.exit_status}），保存未执行`);
+        return;
+      }
+
+      const result = await saveNginxServiceConfigFile({
+        id: selectedNginxConfigService.id,
+        content: nginxConfigContent
+      });
+      setNginxConfigSourcePath(result.source_path);
+      setNginxConfigOriginalContent(nginxConfigContent);
+      setNginxConfigLoadedAt(result.saved_at);
+      setNginxConfigValidationErrorDetail(null);
+      setNginxMessage(`配置已保存：${result.source_path}（${result.bytes} bytes）`);
+      setNginxMessageIsError(false);
+      showNginxToast('success', 'nginx 配置保存成功');
+    } catch (invokeError) {
+      const errorText = formatInvokeError(invokeError);
+      setNginxConfigValidationErrorDetail(errorText);
+      setNginxMessage(`保存 nginx 配置失败：${errorText}`);
+      setNginxMessageIsError(true);
+      showNginxToast('error', `保存 nginx 配置失败：${errorText}`);
+    } finally {
+      setNginxConfigSaving(false);
+    }
+  }, [nginxConfigContent, selectedNginxConfigService, showNginxToast]);
+
+  const onResetNginxConfigContent = useCallback(() => {
+    setNginxConfigContent(nginxConfigOriginalContent);
+  }, [nginxConfigOriginalContent]);
+
   const clearNginxOperationLogs = useCallback(() => {
     setNginxOperationLogs([]);
   }, []);
 
-  const detailActionDisabled = nginxBusy || nginxDetailStatusBusy || Boolean(nginxDetailAction) || nginxConfigTesting;
+  const detailActionDisabled =
+    nginxBusy || nginxDetailStatusBusy || Boolean(nginxDetailAction) || nginxConfigTesting;
   const detailBackDisabled = Boolean(nginxDetailAction);
   const isDetailRunning = nginxDetailStatus?.running ?? false;
   const canDetailStart = !detailActionDisabled && !isDetailRunning;
   const canDetailStop = !detailActionDisabled && isDetailRunning;
+  const nginxConfigEditorBusy = nginxConfigLoading || nginxConfigSaving;
 
   return {
     textInputProps,
@@ -504,9 +689,18 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     nginxDetailStatusBusy,
     nginxDetailAction,
     nginxConfigTesting,
+    nginxConfigLoading,
+    nginxConfigSaving,
+    nginxConfigEditorBusy,
+    nginxConfigSourcePath,
+    nginxConfigContent,
+    nginxConfigLoadedAt,
+    nginxConfigDirty,
+    nginxConfigValidationErrorDetail,
     nginxLastConfigTestResult,
     nginxOperationLogs,
     nginxDeleteTarget,
+    nginxToast,
     detailActionDisabled,
     detailBackDisabled,
     canDetailStart,
@@ -516,10 +710,13 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     profileNameMap,
     selectedNginxProfile,
     selectedNginxDetailService,
+    selectedNginxConfigService,
     refreshNginxList,
     onStartCreateNginx,
     onEditNginx,
     onOpenNginxDetail,
+    onOpenNginxConfig,
+    onBackNginxConfig,
     onBackNginxList,
     onDiscoverNginx,
     onAutoAddDiscoveredNginx,
@@ -531,7 +728,12 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     refreshNginxDetailStatus,
     onControlNginx,
     onTestNginxConfig,
+    onReloadNginxConfigFile,
+    onSaveNginxConfigFile,
+    onResetNginxConfigContent,
     clearNginxOperationLogs,
-    setNginxForm
+    dismissNginxToast,
+    setNginxForm,
+    setNginxConfigContent
   };
 }

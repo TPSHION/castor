@@ -1,4 +1,4 @@
-export type NginxMode = 'list' | 'create' | 'edit' | 'detail';
+export type NginxMode = 'list' | 'create' | 'edit' | 'detail' | 'config';
 
 export type NginxFormState = {
   id?: string;

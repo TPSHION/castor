@@ -32,12 +32,19 @@ use crate::nginx::{
     get_nginx_service_status as get_nginx_service_status_impl,
     import_nginx_service_by_params as import_nginx_service_by_params_impl,
     list_nginx_services as list_nginx_services_impl,
+    parse_nginx_service_config as parse_nginx_service_config_impl,
+    read_nginx_service_config_file as read_nginx_service_config_file_impl,
+    save_nginx_service_config_file as save_nginx_service_config_file_impl,
     test_nginx_service_config as test_nginx_service_config_impl,
-    upsert_nginx_service as upsert_nginx_service_impl, ControlNginxServiceRequest,
-    DeleteNginxServiceRequest, DiscoverRemoteNginxRequest, GetNginxServiceStatusRequest,
-    ImportNginxServiceByParamsRequest, NginxConfigTestResult, NginxService,
-    NginxServiceActionResult, NginxServiceStatus, RemoteNginxDiscoveryResult,
-    TestNginxServiceConfigRequest, UpsertNginxServiceRequest,
+    upsert_nginx_service as upsert_nginx_service_impl,
+    validate_nginx_service_config_content as validate_nginx_service_config_content_impl,
+    ControlNginxServiceRequest, DeleteNginxServiceRequest, DiscoverRemoteNginxRequest,
+    GetNginxServiceStatusRequest, ImportNginxServiceByParamsRequest, NginxConfigTestResult,
+    NginxConfigValidationResult, NginxParsedConfigResult, NginxService, NginxServiceActionResult,
+    NginxServiceConfigFileResult, NginxServiceConfigFileSaveResult, NginxServiceStatus,
+    ParseNginxServiceConfigRequest, ReadNginxServiceConfigFileRequest, RemoteNginxDiscoveryResult,
+    SaveNginxServiceConfigFileRequest, TestNginxServiceConfigRequest, UpsertNginxServiceRequest,
+    ValidateNginxServiceConfigContentRequest,
 };
 use crate::profiles::{
     delete_connection_profile as delete_profile_impl,
@@ -486,4 +493,56 @@ pub async fn test_nginx_service_config(
     })
     .await
     .map_err(|err| format!("failed to join nginx config test task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn parse_nginx_service_config(
+    app: AppHandle,
+    request: ParseNginxServiceConfigRequest,
+) -> Result<NginxParsedConfigResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        parse_nginx_service_config_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join nginx config parse task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn read_nginx_service_config_file(
+    app: AppHandle,
+    request: ReadNginxServiceConfigFileRequest,
+) -> Result<NginxServiceConfigFileResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        read_nginx_service_config_file_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join read nginx config file task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn save_nginx_service_config_file(
+    app: AppHandle,
+    request: SaveNginxServiceConfigFileRequest,
+) -> Result<NginxServiceConfigFileSaveResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        save_nginx_service_config_file_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join save nginx config file task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn validate_nginx_service_config_content(
+    app: AppHandle,
+    request: ValidateNginxServiceConfigContentRequest,
+) -> Result<NginxConfigValidationResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_nginx_service_config_content_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join validate nginx config content task: {err}"))?
 }

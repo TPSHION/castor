@@ -16,12 +16,19 @@ import type {
   ImportNginxServiceByParamsRequest,
   ListRemoteSystemdServicesRequest,
   NginxConfigTestResult,
+  NginxConfigValidationResult,
+  NginxParsedConfigResult,
   NginxService,
   NginxServiceActionResult,
+  NginxServiceConfigFileResult,
+  NginxServiceConfigFileSaveResult,
   NginxServiceStatus,
+  ParseNginxServiceConfigRequest,
+  ReadNginxServiceConfigFileRequest,
   RemoteSystemdServiceItem,
   RemoteNginxDiscoveryResult,
   RemoteSystemdServiceTemplate,
+  SaveNginxServiceConfigFileRequest,
   SystemdDeployService,
   SystemdServiceActionResult,
   SystemdServiceLogsResult,
@@ -30,7 +37,8 @@ import type {
   UpsertNginxServiceRequest,
   UpsertSystemdDeployServiceRequest,
   DeleteConnectionProfileRequest,
-  UpsertConnectionProfileRequest
+  UpsertConnectionProfileRequest,
+  ValidateNginxServiceConfigContentRequest
 } from '../../types';
 import { invokeTauri, invokeTauriWithRequest } from './tauri';
 
@@ -147,4 +155,32 @@ export function controlNginxService(request: ControlNginxServiceRequest) {
 
 export function testNginxServiceConfig(request: TestNginxServiceConfigRequest) {
   return invokeTauriWithRequest<NginxConfigTestResult, TestNginxServiceConfigRequest>('test_nginx_service_config', request);
+}
+
+export function parseNginxServiceConfig(request: ParseNginxServiceConfigRequest) {
+  return invokeTauriWithRequest<NginxParsedConfigResult, ParseNginxServiceConfigRequest>(
+    'parse_nginx_service_config',
+    request
+  );
+}
+
+export function readNginxServiceConfigFile(request: ReadNginxServiceConfigFileRequest) {
+  return invokeTauriWithRequest<NginxServiceConfigFileResult, ReadNginxServiceConfigFileRequest>(
+    'read_nginx_service_config_file',
+    request
+  );
+}
+
+export function saveNginxServiceConfigFile(request: SaveNginxServiceConfigFileRequest) {
+  return invokeTauriWithRequest<NginxServiceConfigFileSaveResult, SaveNginxServiceConfigFileRequest>(
+    'save_nginx_service_config_file',
+    request
+  );
+}
+
+export function validateNginxServiceConfigContent(request: ValidateNginxServiceConfigContentRequest) {
+  return invokeTauriWithRequest<NginxConfigValidationResult, ValidateNginxServiceConfigContentRequest>(
+    'validate_nginx_service_config_content',
+    request
+  );
 }

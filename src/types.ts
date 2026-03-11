@@ -550,3 +550,73 @@ export type NginxConfigTestResult = {
   exit_status: number;
   checked_at: number;
 };
+
+export type ParseNginxServiceConfigRequest = {
+  id: string;
+};
+
+export type ReadNginxServiceConfigFileRequest = {
+  id: string;
+};
+
+export type NginxServiceConfigFileResult = {
+  id: string;
+  source_path: string;
+  content: string;
+  loaded_at: number;
+};
+
+export type SaveNginxServiceConfigFileRequest = {
+  id: string;
+  content: string;
+};
+
+export type NginxServiceConfigFileSaveResult = {
+  id: string;
+  source_path: string;
+  bytes: number;
+  saved_at: number;
+};
+
+export type ValidateNginxServiceConfigContentRequest = {
+  id: string;
+  content: string;
+};
+
+export type NginxConfigValidationResult = {
+  id: string;
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exit_status: number;
+  checked_at: number;
+};
+
+export type NginxParsedConfigNodeType = 'directive' | 'block';
+
+export type NginxParsedConfigNode = {
+  id: string;
+  node_type: NginxParsedConfigNodeType;
+  name: string;
+  args: string[];
+  line_start: number;
+  line_end: number;
+  children: NginxParsedConfigNode[];
+};
+
+export type NginxParsedConfigSummary = {
+  server_count: number;
+  upstream_count: number;
+  location_count: number;
+  include_count: number;
+  listen: string[];
+  server_names: string[];
+};
+
+export type NginxParsedConfigResult = {
+  id: string;
+  source_path: string;
+  parsed_at: number;
+  summary: NginxParsedConfigSummary;
+  root: NginxParsedConfigNode;
+};

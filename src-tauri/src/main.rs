@@ -18,11 +18,13 @@ use commands::{
     import_nginx_service_by_params, list_connection_profiles, list_local_dir, list_nginx_services,
     list_remote_systemd_services, list_runtime_deploy_versions, list_sessions,
     list_systemd_deploy_services, local_create_dir, local_delete_entry, local_rename_entry,
-    plan_runtime_deploy, preflight_server_runtime_probe, probe_server_runtimes, resize_ssh,
-    send_ssh_input, sftp_connect, sftp_create_dir, sftp_delete_entry, sftp_disconnect,
-    sftp_download_file, sftp_list_dir, sftp_rename_entry, sftp_set_permissions, sftp_upload_path,
-    test_nginx_service_config, test_ssh_connection, upsert_connection_profile,
-    upsert_nginx_service, upsert_systemd_deploy_service,
+    parse_nginx_service_config, plan_runtime_deploy, preflight_server_runtime_probe,
+    probe_server_runtimes, read_nginx_service_config_file, resize_ssh,
+    save_nginx_service_config_file, send_ssh_input, sftp_connect, sftp_create_dir,
+    sftp_delete_entry, sftp_disconnect, sftp_download_file, sftp_list_dir, sftp_rename_entry,
+    sftp_set_permissions, sftp_upload_path, test_nginx_service_config, test_ssh_connection,
+    upsert_connection_profile, upsert_nginx_service, upsert_systemd_deploy_service,
+    validate_nginx_service_config_content,
 };
 use ssh::SshState;
 
@@ -78,7 +80,11 @@ fn main() {
             import_nginx_service_by_params,
             get_nginx_service_status,
             control_nginx_service,
-            test_nginx_service_config
+            test_nginx_service_config,
+            parse_nginx_service_config,
+            read_nginx_service_config_file,
+            save_nginx_service_config_file,
+            validate_nginx_service_config_content
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Castor");

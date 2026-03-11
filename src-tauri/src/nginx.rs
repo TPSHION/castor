@@ -1,4 +1,4 @@
-use std::collections::{hash_map::DefaultHasher, HashMap};
+use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{ErrorKind, Read, Write};
@@ -94,6 +94,54 @@ pub struct TestNginxServiceConfigRequest {
     pub id: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ParseNginxServiceConfigRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReadNginxServiceConfigFileRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NginxServiceConfigFileResult {
+    pub id: String,
+    pub source_path: String,
+    pub content: String,
+    pub loaded_at: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveNginxServiceConfigFileRequest {
+    pub id: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NginxServiceConfigFileSaveResult {
+    pub id: String,
+    pub source_path: String,
+    pub bytes: u64,
+    pub saved_at: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ValidateNginxServiceConfigContentRequest {
+    pub id: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NginxConfigValidationResult {
+    pub id: String,
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_status: i32,
+    pub checked_at: u64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct NginxServiceStatus {
     pub summary: String,
@@ -120,6 +168,43 @@ pub struct NginxConfigTestResult {
     pub stderr: String,
     pub exit_status: i32,
     pub checked_at: u64,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NginxConfigNodeType {
+    Directive,
+    Block,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NginxParsedConfigNode {
+    pub id: String,
+    pub node_type: NginxConfigNodeType,
+    pub name: String,
+    pub args: Vec<String>,
+    pub line_start: u32,
+    pub line_end: u32,
+    pub children: Vec<NginxParsedConfigNode>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NginxParsedConfigSummary {
+    pub server_count: u32,
+    pub upstream_count: u32,
+    pub location_count: u32,
+    pub include_count: u32,
+    pub listen: Vec<String>,
+    pub server_names: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NginxParsedConfigResult {
+    pub id: String,
+    pub source_path: String,
+    pub parsed_at: u64,
+    pub summary: NginxParsedConfigSummary,
+    pub root: NginxParsedConfigNode,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -334,6 +419,86 @@ pub fn test_nginx_service_config(
     })
 }
 
+pub fn parse_nginx_service_config(
+    app: &AppHandle,
+    request: ParseNginxServiceConfigRequest,
+) -> Result<NginxParsedConfigResult, String> {
+    let service = find_nginx_service_by_id(app, &request.id)?;
+    let profile = find_profile(app, &service.profile_id)?;
+
+    with_pooled_session(&profile, |session| {
+        let (source_path, raw_config) = load_nginx_config_text(session, &service)?;
+        let root = parse_nginx_config_tree(&raw_config)?;
+        let summary = summarize_nginx_config(&root);
+
+        Ok(NginxParsedConfigResult {
+            id: service.id.clone(),
+            source_path,
+            parsed_at: now_unix(),
+            summary,
+            root,
+        })
+    })
+}
+
+pub fn read_nginx_service_config_file(
+    app: &AppHandle,
+    request: ReadNginxServiceConfigFileRequest,
+) -> Result<NginxServiceConfigFileResult, String> {
+    let service = find_nginx_service_by_id(app, &request.id)?;
+    let profile = find_profile(app, &service.profile_id)?;
+
+    with_pooled_session(&profile, |session| {
+        let (source_path, content) = load_nginx_config_file_content(session, &service)?;
+        Ok(NginxServiceConfigFileResult {
+            id: service.id.clone(),
+            source_path,
+            content,
+            loaded_at: now_unix(),
+        })
+    })
+}
+
+pub fn save_nginx_service_config_file(
+    app: &AppHandle,
+    request: SaveNginxServiceConfigFileRequest,
+) -> Result<NginxServiceConfigFileSaveResult, String> {
+    let service = find_nginx_service_by_id(app, &request.id)?;
+    let profile = find_profile(app, &service.profile_id)?;
+
+    with_pooled_session(&profile, |session| {
+        let (source_path, bytes) =
+            save_nginx_config_file_content(session, &service, request.content.as_str())?;
+        Ok(NginxServiceConfigFileSaveResult {
+            id: service.id.clone(),
+            source_path,
+            bytes,
+            saved_at: now_unix(),
+        })
+    })
+}
+
+pub fn validate_nginx_service_config_content(
+    app: &AppHandle,
+    request: ValidateNginxServiceConfigContentRequest,
+) -> Result<NginxConfigValidationResult, String> {
+    let service = find_nginx_service_by_id(app, &request.id)?;
+    let profile = find_profile(app, &service.profile_id)?;
+
+    with_pooled_session(&profile, |session| {
+        let (stdout, stderr, exit_status) =
+            validate_nginx_config_file_content(session, &service, request.content.as_str())?;
+        Ok(NginxConfigValidationResult {
+            id: service.id.clone(),
+            success: exit_status == 0,
+            stdout,
+            stderr,
+            exit_status,
+            checked_at: now_unix(),
+        })
+    })
+}
+
 fn query_remote_nginx(session: &mut Session) -> Result<RemoteNginxDiscoveryResult, String> {
     let script = r#"set -euo pipefail
 nginx_bin="$(which nginx 2>/dev/null || true)"
@@ -367,6 +532,349 @@ echo "__CASTOR_VERSION_END__"
     }
 
     Ok(parse_discovery_output(&stdout))
+}
+
+fn resolve_nginx_config_path(service: &NginxService) -> String {
+    service
+        .conf_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .unwrap_or("/etc/nginx/nginx.conf")
+        .to_string()
+}
+
+fn load_nginx_config_file_content(
+    session: &mut Session,
+    service: &NginxService,
+) -> Result<(String, String), String> {
+    let config_path = resolve_nginx_config_path(service);
+    let command_prefix = if service.use_sudo { "sudo " } else { "" };
+    let script = format!(
+        r#"set -euo pipefail
+conf_path={conf_path}
+echo "__CASTOR_CONF_PATH=$conf_path"
+echo "__CASTOR_CONF_BEGIN__"
+{command_prefix}cat "$conf_path"
+echo "__CASTOR_CONF_END__"
+"#,
+        conf_path = shell_quote(config_path.as_str()),
+        command_prefix = command_prefix,
+    );
+
+    let (stdout, stderr, exit_status) = run_remote_script(session, &script)?;
+    if exit_status != 0 {
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        return Err(format!(
+            "读取 nginx 配置文件失败 (exit code {exit_status}): {}",
+            if detail.is_empty() {
+                "unknown error"
+            } else {
+                detail
+            }
+        ));
+    }
+
+    let mut source_path: Option<String> = None;
+    let mut collecting = false;
+    let mut content_lines: Vec<String> = Vec::new();
+    let mut found_begin = false;
+    let mut found_end = false;
+
+    for line in stdout.lines() {
+        if let Some(value) = line.strip_prefix("__CASTOR_CONF_PATH=") {
+            let normalized = value.trim();
+            if !normalized.is_empty() {
+                source_path = Some(normalized.to_string());
+            }
+            continue;
+        }
+        if line == "__CASTOR_CONF_BEGIN__" {
+            collecting = true;
+            found_begin = true;
+            continue;
+        }
+        if line == "__CASTOR_CONF_END__" {
+            collecting = false;
+            found_end = true;
+            continue;
+        }
+        if collecting {
+            content_lines.push(line.to_string());
+        }
+    }
+
+    if !found_begin || !found_end {
+        return Err("读取 nginx 配置文件失败：未找到配置输出边界标记".to_string());
+    }
+
+    Ok((source_path.unwrap_or(config_path), content_lines.join("\n")))
+}
+
+fn save_nginx_config_file_content(
+    session: &mut Session,
+    service: &NginxService,
+    content: &str,
+) -> Result<(String, u64), String> {
+    let config_path = resolve_nginx_config_path(service);
+    let command_prefix = if service.use_sudo { "sudo " } else { "" };
+    let heredoc_marker = {
+        let mut marker = format!("__CASTOR_NGINX_CONF_{}__", Uuid::new_v4().simple());
+        while content.contains(marker.as_str()) {
+            marker.push('_');
+        }
+        marker
+    };
+
+    let script = format!(
+        r#"set -euo pipefail
+conf_path={conf_path}
+tmp_file="$(mktemp)"
+cleanup() {{
+  rm -f "$tmp_file"
+}}
+trap cleanup EXIT
+
+cat > "$tmp_file" <<'{heredoc_marker}'
+{content}
+{heredoc_marker}
+
+bytes="$(wc -c < "$tmp_file" | tr -d '[:space:]')"
+if [ -z "$bytes" ]; then
+  bytes=0
+fi
+
+if [ "{use_sudo}" = "1" ]; then
+  {command_prefix}tee "$conf_path" >/dev/null < "$tmp_file"
+else
+  cat "$tmp_file" > "$conf_path"
+fi
+
+echo "__CASTOR_CONF_PATH=$conf_path"
+echo "__CASTOR_SAVED_BYTES=$bytes"
+"#,
+        conf_path = shell_quote(config_path.as_str()),
+        heredoc_marker = heredoc_marker,
+        content = content,
+        use_sudo = if service.use_sudo { "1" } else { "0" },
+        command_prefix = command_prefix,
+    );
+
+    let (stdout, stderr, exit_status) = run_remote_script(session, &script)?;
+    if exit_status != 0 {
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        return Err(format!(
+            "保存 nginx 配置文件失败 (exit code {exit_status}): {}",
+            if detail.is_empty() {
+                "unknown error"
+            } else {
+                detail
+            }
+        ));
+    }
+
+    let mut source_path: Option<String> = None;
+    let mut bytes: Option<u64> = None;
+
+    for line in stdout.lines() {
+        if let Some(value) = line.strip_prefix("__CASTOR_CONF_PATH=") {
+            let normalized = value.trim();
+            if !normalized.is_empty() {
+                source_path = Some(normalized.to_string());
+            }
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_SAVED_BYTES=") {
+            bytes = value.trim().parse::<u64>().ok();
+        }
+    }
+
+    Ok((source_path.unwrap_or(config_path), bytes.unwrap_or(0)))
+}
+
+fn validate_nginx_config_file_content(
+    session: &mut Session,
+    service: &NginxService,
+    content: &str,
+) -> Result<(String, String, i32), String> {
+    let config_path = resolve_nginx_config_path(service);
+    let command_prefix = if service.use_sudo { "sudo " } else { "" };
+    let nginx_bin = shell_quote(service.nginx_bin.as_str());
+    let heredoc_marker = {
+        let mut marker = format!("__CASTOR_NGINX_VALIDATE_{}__", Uuid::new_v4().simple());
+        while content.contains(marker.as_str()) {
+            marker.push('_');
+        }
+        marker
+    };
+
+    let script = format!(
+        r#"set -uo pipefail
+nginx_bin={nginx_bin}
+conf_path={conf_path}
+conf_dir="$(dirname "$conf_path")"
+tmp_file="$(mktemp)"
+cleanup() {{
+  rm -f "$tmp_file"
+}}
+trap cleanup EXIT
+
+cat > "$tmp_file" <<'{heredoc_marker}'
+{content}
+{heredoc_marker}
+
+{command_prefix}"$nginx_bin" -t -c "$tmp_file" -p "$conf_dir"
+"#,
+        nginx_bin = nginx_bin,
+        conf_path = shell_quote(config_path.as_str()),
+        heredoc_marker = heredoc_marker,
+        content = content,
+        command_prefix = command_prefix,
+    );
+
+    run_remote_script(session, &script)
+}
+
+fn load_nginx_config_text(
+    session: &mut Session,
+    service: &NginxService,
+) -> Result<(String, String), String> {
+    let config_path = service
+        .conf_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .unwrap_or("/etc/nginx/nginx.conf");
+    let command_prefix = if service.use_sudo { "sudo " } else { "" };
+    let conf_arg = format!(" -c {}", shell_quote(config_path));
+    let nginx_bin = shell_quote(service.nginx_bin.as_str());
+
+    let script = format!(
+        r#"set -euo pipefail
+nginx_bin={nginx_bin}
+conf_path={conf_path}
+echo "__CASTOR_CONF_PATH=$conf_path"
+echo "__CASTOR_CONF_BEGIN__"
+if {command_prefix}"$nginx_bin" -T{conf_arg} 2>&1; then
+  echo "__CASTOR_CONF_MODE=nginx_t"
+else
+  echo "__CASTOR_CONF_MODE=fallback"
+  {command_prefix}cat "$conf_path"
+fi
+echo "__CASTOR_CONF_END__"
+"#,
+        nginx_bin = nginx_bin,
+        conf_path = shell_quote(config_path),
+        command_prefix = command_prefix,
+        conf_arg = conf_arg,
+    );
+
+    let (stdout, stderr, exit_status) = run_remote_script(session, &script)?;
+    if exit_status != 0 {
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        return Err(format!(
+            "读取 nginx 配置失败 (exit code {exit_status}): {}",
+            if detail.is_empty() {
+                "unknown error"
+            } else {
+                detail
+            }
+        ));
+    }
+
+    let mut source_path: Option<String> = None;
+    let mut collecting = false;
+    let mut config_lines: Vec<String> = Vec::new();
+    let mut found_begin = false;
+    let mut found_end = false;
+    let mut mode = "fallback".to_string();
+
+    for line in stdout.lines() {
+        if let Some(value) = line.strip_prefix("__CASTOR_CONF_PATH=") {
+            let normalized = value.trim();
+            if !normalized.is_empty() {
+                source_path = Some(normalized.to_string());
+            }
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_CONF_MODE=") {
+            let normalized = value.trim();
+            if !normalized.is_empty() {
+                mode = normalized.to_string();
+            }
+            continue;
+        }
+        if line == "__CASTOR_CONF_BEGIN__" {
+            collecting = true;
+            found_begin = true;
+            continue;
+        }
+        if line == "__CASTOR_CONF_END__" {
+            collecting = false;
+            found_end = true;
+            continue;
+        }
+        if collecting {
+            config_lines.push(line.to_string());
+        }
+    }
+
+    if !found_begin || !found_end {
+        return Err("读取 nginx 配置失败：未找到配置输出边界标记".to_string());
+    }
+
+    let raw_config = config_lines.join("\n");
+    let normalized_config = if mode == "nginx_t" {
+        extract_nginx_t_config_dump(&raw_config).unwrap_or(raw_config)
+    } else {
+        raw_config
+    };
+
+    Ok((
+        source_path.unwrap_or_else(|| config_path.to_string()),
+        normalized_config,
+    ))
+}
+
+fn extract_nginx_t_config_dump(raw: &str) -> Option<String> {
+    let mut found_file_markers = false;
+    let mut lines: Vec<String> = Vec::new();
+
+    for line in raw.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.starts_with("# configuration file ") && trimmed.ends_with(':') {
+            found_file_markers = true;
+            continue;
+        }
+
+        if !found_file_markers {
+            continue;
+        }
+
+        if trimmed.starts_with("nginx: ") {
+            continue;
+        }
+
+        lines.push(line.to_string());
+    }
+
+    if !found_file_markers {
+        return None;
+    }
+
+    Some(lines.join("\n"))
 }
 
 fn parse_discovery_output(raw: &str) -> RemoteNginxDiscoveryResult {
@@ -439,6 +947,342 @@ fn parse_nginx_version(raw: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[derive(Clone, Debug)]
+enum NginxTokenKind {
+    Word(String),
+    LBrace,
+    RBrace,
+    Semicolon,
+}
+
+#[derive(Clone, Debug)]
+struct NginxToken {
+    kind: NginxTokenKind,
+    line: u32,
+}
+
+fn tokenize_nginx_config(raw: &str) -> Result<Vec<NginxToken>, String> {
+    let mut tokens: Vec<NginxToken> = Vec::new();
+    let mut chars = raw.chars().peekable();
+    let mut line: u32 = 1;
+    let mut current = String::new();
+    let mut current_line = line;
+    let mut quote: Option<char> = None;
+    let mut current_quoted = false;
+
+    let push_current = |tokens: &mut Vec<NginxToken>,
+                        current: &mut String,
+                        current_line: u32,
+                        current_quoted: &mut bool|
+     -> Result<(), String> {
+        if !current.is_empty() || *current_quoted {
+            tokens.push(NginxToken {
+                kind: NginxTokenKind::Word(current.clone()),
+                line: current_line,
+            });
+            current.clear();
+            *current_quoted = false;
+        }
+        Ok(())
+    };
+
+    while let Some(ch) = chars.next() {
+        if let Some(quote_char) = quote {
+            if ch == '\n' {
+                line += 1;
+            }
+
+            if ch == quote_char {
+                quote = None;
+                continue;
+            }
+
+            if quote_char == '"' && ch == '\\' {
+                if let Some(next) = chars.next() {
+                    if next == '\n' {
+                        line += 1;
+                    }
+                    current.push(next);
+                    continue;
+                }
+                current.push(ch);
+                continue;
+            }
+
+            current.push(ch);
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' => {
+                if current.is_empty() {
+                    current_line = line;
+                    current_quoted = true;
+                }
+                quote = Some(ch);
+            }
+            '#' => {
+                push_current(&mut tokens, &mut current, current_line, &mut current_quoted)?;
+                while let Some(next) = chars.next() {
+                    if next == '\n' {
+                        line += 1;
+                        break;
+                    }
+                }
+            }
+            '{' => {
+                if current.is_empty() {
+                    push_current(&mut tokens, &mut current, current_line, &mut current_quoted)?;
+                    tokens.push(NginxToken {
+                        kind: NginxTokenKind::LBrace,
+                        line,
+                    });
+                } else {
+                    current.push(ch);
+                }
+            }
+            '}' => {
+                if current.is_empty() {
+                    push_current(&mut tokens, &mut current, current_line, &mut current_quoted)?;
+                    tokens.push(NginxToken {
+                        kind: NginxTokenKind::RBrace,
+                        line,
+                    });
+                } else {
+                    current.push(ch);
+                }
+            }
+            ';' => {
+                push_current(&mut tokens, &mut current, current_line, &mut current_quoted)?;
+                tokens.push(NginxToken {
+                    kind: NginxTokenKind::Semicolon,
+                    line,
+                });
+            }
+            c if c.is_whitespace() => {
+                push_current(&mut tokens, &mut current, current_line, &mut current_quoted)?;
+                if c == '\n' {
+                    line += 1;
+                }
+            }
+            _ => {
+                if current.is_empty() {
+                    current_line = line;
+                }
+                current.push(ch);
+            }
+        }
+    }
+
+    if quote.is_some() {
+        return Err(format!(
+            "nginx 配置解析失败：第 {current_line} 行存在未闭合的字符串"
+        ));
+    }
+
+    push_current(&mut tokens, &mut current, current_line, &mut current_quoted)?;
+    Ok(tokens)
+}
+
+fn parse_nginx_config_tree(raw: &str) -> Result<NginxParsedConfigNode, String> {
+    let tokens = tokenize_nginx_config(raw)?;
+    let mut index = 0usize;
+    let mut next_id = 0u64;
+    let children = parse_nginx_block_items(&tokens, &mut index, &mut next_id, false)?;
+    if index < tokens.len() {
+        return Err(format!(
+            "nginx 配置解析失败：第 {} 行存在未处理内容",
+            tokens[index].line
+        ));
+    }
+
+    let line_end = raw.lines().count().max(1) as u32;
+    Ok(NginxParsedConfigNode {
+        id: "root".to_string(),
+        node_type: NginxConfigNodeType::Block,
+        name: "main".to_string(),
+        args: Vec::new(),
+        line_start: 1,
+        line_end,
+        children,
+    })
+}
+
+fn parse_nginx_block_items(
+    tokens: &[NginxToken],
+    index: &mut usize,
+    next_id: &mut u64,
+    stop_on_rbrace: bool,
+) -> Result<Vec<NginxParsedConfigNode>, String> {
+    let mut nodes: Vec<NginxParsedConfigNode> = Vec::new();
+
+    while *index < tokens.len() {
+        let token = &tokens[*index];
+        match &token.kind {
+            NginxTokenKind::RBrace => {
+                if stop_on_rbrace {
+                    *index += 1;
+                    return Ok(nodes);
+                }
+                return Err(format!(
+                    "nginx 配置解析失败：第 {} 行出现意外的 `}}`",
+                    token.line
+                ));
+            }
+            NginxTokenKind::Semicolon => {
+                *index += 1;
+                continue;
+            }
+            _ => {}
+        }
+
+        let start_line = token.line;
+        let mut words: Vec<String> = Vec::new();
+
+        loop {
+            if *index >= tokens.len() {
+                return Err(format!(
+                    "nginx 配置解析失败：第 {start_line} 行缺少 `;` 或 `{{`"
+                ));
+            }
+
+            let current = &tokens[*index];
+            match &current.kind {
+                NginxTokenKind::Word(value) => {
+                    words.push(value.clone());
+                    *index += 1;
+                }
+                NginxTokenKind::Semicolon => {
+                    *index += 1;
+                    if words.is_empty() {
+                        break;
+                    }
+                    let name = words[0].clone();
+                    let args = words[1..].to_vec();
+                    *next_id += 1;
+                    nodes.push(NginxParsedConfigNode {
+                        id: format!("n{next_id}"),
+                        node_type: NginxConfigNodeType::Directive,
+                        name,
+                        args,
+                        line_start: start_line,
+                        line_end: current.line,
+                        children: Vec::new(),
+                    });
+                    break;
+                }
+                NginxTokenKind::LBrace => {
+                    *index += 1;
+                    if words.is_empty() {
+                        return Err(format!(
+                            "nginx 配置解析失败：第 {} 行在 `{{` 前缺少块名称",
+                            current.line
+                        ));
+                    }
+                    let name = words[0].clone();
+                    let args = words[1..].to_vec();
+                    let children = parse_nginx_block_items(tokens, index, next_id, true)?;
+                    let end_line = if *index == 0 {
+                        current.line
+                    } else {
+                        tokens[*index - 1].line
+                    };
+                    *next_id += 1;
+                    nodes.push(NginxParsedConfigNode {
+                        id: format!("n{next_id}"),
+                        node_type: NginxConfigNodeType::Block,
+                        name,
+                        args,
+                        line_start: start_line,
+                        line_end: end_line,
+                        children,
+                    });
+                    break;
+                }
+                NginxTokenKind::RBrace => {
+                    if stop_on_rbrace && words.is_empty() {
+                        *index += 1;
+                        return Ok(nodes);
+                    }
+                    return Err(format!(
+                        "nginx 配置解析失败：第 {} 行在 `}}` 前缺少 `;`",
+                        current.line
+                    ));
+                }
+            }
+        }
+    }
+
+    if stop_on_rbrace {
+        return Err("nginx 配置解析失败：存在未闭合的 `{`".to_string());
+    }
+
+    Ok(nodes)
+}
+
+fn summarize_nginx_config(root: &NginxParsedConfigNode) -> NginxParsedConfigSummary {
+    let mut summary = NginxParsedConfigSummary {
+        server_count: 0,
+        upstream_count: 0,
+        location_count: 0,
+        include_count: 0,
+        listen: Vec::new(),
+        server_names: Vec::new(),
+    };
+    let mut seen_listen: HashSet<String> = HashSet::new();
+    let mut seen_server_names: HashSet<String> = HashSet::new();
+
+    fn walk(
+        node: &NginxParsedConfigNode,
+        summary: &mut NginxParsedConfigSummary,
+        seen_listen: &mut HashSet<String>,
+        seen_server_names: &mut HashSet<String>,
+    ) {
+        match node.node_type {
+            NginxConfigNodeType::Block => match node.name.as_str() {
+                "server" => summary.server_count += 1,
+                "upstream" => summary.upstream_count += 1,
+                "location" => summary.location_count += 1,
+                _ => {}
+            },
+            NginxConfigNodeType::Directive => {
+                if node.name == "include" {
+                    summary.include_count += 1;
+                }
+                if node.name == "listen" {
+                    let value = node.args.join(" ");
+                    if !value.is_empty()
+                        && seen_listen.insert(value.clone())
+                        && summary.listen.len() < 24
+                    {
+                        summary.listen.push(value);
+                    }
+                }
+                if node.name == "server_name" {
+                    for name in &node.args {
+                        let normalized = name.trim();
+                        if normalized.is_empty() {
+                            continue;
+                        }
+                        if seen_server_names.insert(normalized.to_string())
+                            && summary.server_names.len() < 48
+                        {
+                            summary.server_names.push(normalized.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        for child in &node.children {
+            walk(child, summary, seen_listen, seen_server_names);
+        }
+    }
+
+    walk(root, &mut summary, &mut seen_listen, &mut seen_server_names);
+    summary
 }
 
 fn parse_nginx_configure_flag(raw: &str, prefix: &str) -> Option<String> {

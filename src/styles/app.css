@@ -4,6 +4,7 @@
 @import './app/shared.css';
 @import './app/environment.css';
 @import './app/systemd.css';
+@import './app/nginx.css';
 @import './app/modals.css';
 @import './app/workspace.css';
 @import './app/responsive.css';
