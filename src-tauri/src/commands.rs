@@ -25,6 +25,20 @@ use crate::localfs::{
     LocalCreateDirRequest, LocalDeleteRequest, LocalListRequest, LocalListResponse,
     LocalRenameRequest,
 };
+use crate::nginx::{
+    control_nginx_service as control_nginx_service_impl,
+    delete_nginx_service as delete_nginx_service_impl,
+    discover_remote_nginx as discover_remote_nginx_impl,
+    get_nginx_service_status as get_nginx_service_status_impl,
+    import_nginx_service_by_params as import_nginx_service_by_params_impl,
+    list_nginx_services as list_nginx_services_impl,
+    test_nginx_service_config as test_nginx_service_config_impl,
+    upsert_nginx_service as upsert_nginx_service_impl, ControlNginxServiceRequest,
+    DeleteNginxServiceRequest, DiscoverRemoteNginxRequest, GetNginxServiceStatusRequest,
+    ImportNginxServiceByParamsRequest, NginxConfigTestResult, NginxService,
+    NginxServiceActionResult, NginxServiceStatus, RemoteNginxDiscoveryResult,
+    TestNginxServiceConfigRequest, UpsertNginxServiceRequest,
+};
 use crate::profiles::{
     delete_connection_profile as delete_profile_impl,
     list_connection_profiles as list_profiles_impl,
@@ -390,4 +404,86 @@ pub async fn get_remote_systemd_service_template(
     })
     .await
     .map_err(|err| format!("failed to join get remote systemd service template task: {err}"))?
+}
+
+#[tauri::command]
+pub fn list_nginx_services(app: AppHandle) -> Result<Vec<NginxService>, String> {
+    list_nginx_services_impl(&app)
+}
+
+#[tauri::command]
+pub fn upsert_nginx_service(
+    app: AppHandle,
+    request: UpsertNginxServiceRequest,
+) -> Result<NginxService, String> {
+    upsert_nginx_service_impl(&app, request)
+}
+
+#[tauri::command]
+pub fn delete_nginx_service(
+    app: AppHandle,
+    request: DeleteNginxServiceRequest,
+) -> Result<(), String> {
+    delete_nginx_service_impl(&app, request)
+}
+
+#[tauri::command]
+pub async fn discover_remote_nginx(
+    app: AppHandle,
+    request: DiscoverRemoteNginxRequest,
+) -> Result<RemoteNginxDiscoveryResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || discover_remote_nginx_impl(&app_handle, request))
+        .await
+        .map_err(|err| format!("failed to join discover remote nginx task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn import_nginx_service_by_params(
+    app: AppHandle,
+    request: ImportNginxServiceByParamsRequest,
+) -> Result<NginxService, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        import_nginx_service_by_params_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join import nginx service task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn get_nginx_service_status(
+    app: AppHandle,
+    request: GetNginxServiceStatusRequest,
+) -> Result<NginxServiceStatus, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        get_nginx_service_status_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join nginx status task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn control_nginx_service(
+    app: AppHandle,
+    request: ControlNginxServiceRequest,
+) -> Result<NginxServiceActionResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || control_nginx_service_impl(&app_handle, request))
+        .await
+        .map_err(|err| format!("failed to join nginx control task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn test_nginx_service_config(
+    app: AppHandle,
+    request: TestNginxServiceConfigRequest,
+) -> Result<NginxConfigTestResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        test_nginx_service_config_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join nginx config test task: {err}"))?
 }

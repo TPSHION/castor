@@ -1,6 +1,7 @@
 mod commands;
 mod deploy;
 mod localfs;
+mod nginx;
 mod profiles;
 mod runtime;
 mod runtime_deploy;
@@ -10,15 +11,18 @@ mod ssh;
 use commands::{
     apply_runtime_deploy, apply_systemd_deploy_service, cancel_runtime_deploy,
     cancel_server_runtime_probe, cancel_sftp_transfer, connect_local_terminal, connect_ssh,
-    control_systemd_deploy_service, delete_connection_profile, delete_systemd_deploy_service,
-    deploy_systemd_service, disconnect_ssh, get_remote_systemd_service_template,
-    get_systemd_deploy_service_logs, get_systemd_deploy_service_status, list_connection_profiles,
-    list_local_dir, list_remote_systemd_services, list_runtime_deploy_versions, list_sessions,
+    control_nginx_service, control_systemd_deploy_service, delete_connection_profile,
+    delete_nginx_service, delete_systemd_deploy_service, deploy_systemd_service, disconnect_ssh,
+    discover_remote_nginx, get_nginx_service_status, get_remote_systemd_service_template,
+    get_systemd_deploy_service_logs, get_systemd_deploy_service_status,
+    import_nginx_service_by_params, list_connection_profiles, list_local_dir, list_nginx_services,
+    list_remote_systemd_services, list_runtime_deploy_versions, list_sessions,
     list_systemd_deploy_services, local_create_dir, local_delete_entry, local_rename_entry,
     plan_runtime_deploy, preflight_server_runtime_probe, probe_server_runtimes, resize_ssh,
     send_ssh_input, sftp_connect, sftp_create_dir, sftp_delete_entry, sftp_disconnect,
-    sftp_download_file, sftp_list_dir, sftp_rename_entry, sftp_set_permissions,
-    sftp_upload_path, test_ssh_connection, upsert_connection_profile, upsert_systemd_deploy_service,
+    sftp_download_file, sftp_list_dir, sftp_rename_entry, sftp_set_permissions, sftp_upload_path,
+    test_nginx_service_config, test_ssh_connection, upsert_connection_profile,
+    upsert_nginx_service, upsert_systemd_deploy_service,
 };
 use ssh::SshState;
 
@@ -66,7 +70,15 @@ fn main() {
             get_systemd_deploy_service_logs,
             control_systemd_deploy_service,
             list_remote_systemd_services,
-            get_remote_systemd_service_template
+            get_remote_systemd_service_template,
+            list_nginx_services,
+            upsert_nginx_service,
+            delete_nginx_service,
+            discover_remote_nginx,
+            import_nginx_service_by_params,
+            get_nginx_service_status,
+            control_nginx_service,
+            test_nginx_service_config
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Castor");

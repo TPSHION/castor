@@ -145,13 +145,7 @@ pub fn apply_runtime_deploy(
 
     if is_runtime_deploy_canceled(deploy_id)? {
         let mut logs = Vec::new();
-        push_runtime_deploy_log(
-            app,
-            deploy_id,
-            &mut logs,
-            "warn",
-            "runtime deploy canceled",
-        );
+        push_runtime_deploy_log(app, deploy_id, &mut logs, "warn", "runtime deploy canceled");
         return Ok(RuntimeDeployApplyResult {
             language: request.language,
             version,
@@ -170,27 +164,24 @@ pub fn apply_runtime_deploy(
         &mut logs,
         "info",
         format!(
-        "deploy target: {}@{}:{}",
-        profile.username, profile.host, profile.port
-    ),
+            "deploy target: {}@{}:{}",
+            profile.username, profile.host, profile.port
+        ),
     );
     push_runtime_deploy_log(
         app,
         deploy_id,
         &mut logs,
         "info",
-        format!("language: {:?}, version: {}", request.language, plan.version),
+        format!(
+            "language: {:?}, version: {}",
+            request.language, plan.version
+        ),
     );
 
     for (index, step) in plan.steps.iter().enumerate() {
         if is_runtime_deploy_canceled(deploy_id)? {
-            push_runtime_deploy_log(
-                app,
-                deploy_id,
-                &mut logs,
-                "warn",
-                "runtime deploy canceled",
-            );
+            push_runtime_deploy_log(app, deploy_id, &mut logs, "warn", "runtime deploy canceled");
             return Ok(RuntimeDeployApplyResult {
                 language: request.language,
                 version: version.clone(),
@@ -609,7 +600,8 @@ fn compare_runtime_version_desc(
 ) -> Ordering {
     let left_key = parse_version_sort_key(&left.version);
     let right_key = parse_version_sort_key(&right.version);
-    let channel_cmp = runtime_channel_priority(right.channel).cmp(&runtime_channel_priority(left.channel));
+    let channel_cmp =
+        runtime_channel_priority(right.channel).cmp(&runtime_channel_priority(left.channel));
     compare_version_segments_desc(&left_key.numbers, &right_key.numbers)
         .then(channel_cmp)
         .then_with(|| right_key.suffix.cmp(&left_key.suffix))
@@ -635,7 +627,10 @@ struct VersionSortKey {
 }
 
 fn parse_version_sort_key(source: &str) -> VersionSortKey {
-    let trimmed = source.trim().trim_start_matches('v').trim_start_matches("go");
+    let trimmed = source
+        .trim()
+        .trim_start_matches('v')
+        .trim_start_matches("go");
     let (numbers_part, suffix_part) = match trimmed.split_once('-') {
         Some((numbers, suffix)) => (numbers, suffix),
         None => (trimmed, ""),

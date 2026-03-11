@@ -1,21 +1,33 @@
 import type {
+  ControlNginxServiceRequest,
   ApplySystemdDeployServiceRequest,
   ConnectRequest,
   ControlSystemdDeployServiceRequest,
   ConnectionProfile,
+  DeleteNginxServiceRequest,
   GetRemoteSystemdServiceTemplateRequest,
   DeleteSystemdDeployServiceRequest,
   DeploySystemdServiceRequest,
   DeploySystemdServiceResult,
+  DiscoverRemoteNginxRequest,
+  GetNginxServiceStatusRequest,
   GetSystemdDeployServiceLogsRequest,
   GetSystemdDeployServiceStatusRequest,
+  ImportNginxServiceByParamsRequest,
   ListRemoteSystemdServicesRequest,
+  NginxConfigTestResult,
+  NginxService,
+  NginxServiceActionResult,
+  NginxServiceStatus,
   RemoteSystemdServiceItem,
+  RemoteNginxDiscoveryResult,
   RemoteSystemdServiceTemplate,
   SystemdDeployService,
   SystemdServiceActionResult,
   SystemdServiceLogsResult,
   SystemdServiceStatus,
+  TestNginxServiceConfigRequest,
+  UpsertNginxServiceRequest,
   UpsertSystemdDeployServiceRequest,
   DeleteConnectionProfileRequest,
   UpsertConnectionProfileRequest
@@ -103,4 +115,36 @@ export function getRemoteSystemdServiceTemplate(request: GetRemoteSystemdService
     'get_remote_systemd_service_template',
     request
   );
+}
+
+export function listNginxServices() {
+  return invokeTauri<NginxService[]>('list_nginx_services');
+}
+
+export function upsertNginxService(request: UpsertNginxServiceRequest) {
+  return invokeTauriWithRequest<NginxService, UpsertNginxServiceRequest>('upsert_nginx_service', request);
+}
+
+export function deleteNginxService(request: DeleteNginxServiceRequest) {
+  return invokeTauriWithRequest<void, DeleteNginxServiceRequest>('delete_nginx_service', request);
+}
+
+export function discoverRemoteNginx(request: DiscoverRemoteNginxRequest) {
+  return invokeTauriWithRequest<RemoteNginxDiscoveryResult, DiscoverRemoteNginxRequest>('discover_remote_nginx', request);
+}
+
+export function importNginxServiceByParams(request: ImportNginxServiceByParamsRequest) {
+  return invokeTauriWithRequest<NginxService, ImportNginxServiceByParamsRequest>('import_nginx_service_by_params', request);
+}
+
+export function getNginxServiceStatus(request: GetNginxServiceStatusRequest) {
+  return invokeTauriWithRequest<NginxServiceStatus, GetNginxServiceStatusRequest>('get_nginx_service_status', request);
+}
+
+export function controlNginxService(request: ControlNginxServiceRequest) {
+  return invokeTauriWithRequest<NginxServiceActionResult, ControlNginxServiceRequest>('control_nginx_service', request);
+}
+
+export function testNginxServiceConfig(request: TestNginxServiceConfigRequest) {
+  return invokeTauriWithRequest<NginxConfigTestResult, TestNginxServiceConfigRequest>('test_nginx_service_config', request);
 }

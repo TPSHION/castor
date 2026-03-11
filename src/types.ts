@@ -462,3 +462,91 @@ export type RemoteSystemdServiceTemplate = {
   log_output_mode?: SystemdLogOutputMode;
   log_output_path?: string;
 };
+
+export type NginxService = {
+  id: string;
+  profile_id: string;
+  name: string;
+  nginx_bin: string;
+  conf_path?: string;
+  pid_path?: string;
+  use_sudo: boolean;
+  created_at: number;
+  updated_at: number;
+};
+
+export type UpsertNginxServiceRequest = {
+  id?: string;
+  profile_id: string;
+  name: string;
+  nginx_bin?: string;
+  conf_path?: string;
+  pid_path?: string;
+  use_sudo?: boolean;
+};
+
+export type DeleteNginxServiceRequest = {
+  id: string;
+};
+
+export type DiscoverRemoteNginxRequest = {
+  profile_id: string;
+};
+
+export type RemoteNginxDiscoveryResult = {
+  installed: boolean;
+  nginx_bin?: string;
+  conf_path?: string;
+  pid_path?: string;
+  version?: string;
+};
+
+export type ImportNginxServiceByParamsRequest = {
+  id?: string;
+  profile_id: string;
+  name: string;
+  nginx_bin: string;
+  conf_path?: string;
+  pid_path?: string;
+  use_sudo?: boolean;
+};
+
+export type GetNginxServiceStatusRequest = {
+  id: string;
+};
+
+export type NginxControlAction = 'start' | 'stop' | 'reload' | 'restart';
+
+export type ControlNginxServiceRequest = {
+  id: string;
+  action: NginxControlAction;
+};
+
+export type NginxServiceStatus = {
+  summary: string;
+  running: boolean;
+  master_pid?: number;
+  checked_at: number;
+};
+
+export type NginxServiceActionResult = {
+  id: string;
+  action: NginxControlAction;
+  stdout: string;
+  stderr: string;
+  exit_status: number;
+  status: NginxServiceStatus;
+};
+
+export type TestNginxServiceConfigRequest = {
+  id: string;
+};
+
+export type NginxConfigTestResult = {
+  id: string;
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exit_status: number;
+  checked_at: number;
+};

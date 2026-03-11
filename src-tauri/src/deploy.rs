@@ -241,11 +241,7 @@ pub fn upsert_systemd_deploy_service(
     let normalized_service_name = normalize_service_name(&request.service_name)?;
     let (log_output_mode, log_output_path) =
         normalize_log_output(request.log_output_mode, request.log_output_path)?;
-    ensure_unique_service_name(
-        &services,
-        &normalized_service_name,
-        request.id.as_deref(),
-    )?;
+    ensure_unique_service_name(&services, &normalized_service_name, request.id.as_deref())?;
 
     let updated = if let Some(id) = request.id {
         if let Some(existing) = services.iter_mut().find(|service| service.id == id) {
@@ -429,7 +425,12 @@ pub fn get_systemd_deploy_service_status(
 
     let profile = find_profile(app, &service.profile_id)?;
     with_pooled_session(&profile, |session| {
-        query_service_status(session, &service.service_name, service.scope, service.use_sudo)
+        query_service_status(
+            session,
+            &service.service_name,
+            service.scope,
+            service.use_sudo,
+        )
     })
 }
 
@@ -473,7 +474,12 @@ pub fn control_systemd_deploy_service(
             ));
         }
 
-        let status = query_service_status(session, &service.service_name, service.scope, service.use_sudo)?;
+        let status = query_service_status(
+            session,
+            &service.service_name,
+            service.scope,
+            service.use_sudo,
+        )?;
 
         Ok(SystemdServiceActionResult {
             id: service.id.clone(),
@@ -493,7 +499,9 @@ pub fn list_remote_systemd_services(
     validate_profile_exists(app, &request.profile_id)?;
     let profile = find_profile(app, &request.profile_id)?;
     let scope = request.scope.unwrap_or(SystemdScope::System);
-    let use_sudo = request.use_sudo.unwrap_or(matches!(scope, SystemdScope::System));
+    let use_sudo = request
+        .use_sudo
+        .unwrap_or(matches!(scope, SystemdScope::System));
 
     with_pooled_session(&profile, |session| {
         query_remote_systemd_services(session, scope, use_sudo)
@@ -507,7 +515,9 @@ pub fn get_remote_systemd_service_template(
     validate_profile_exists(app, &request.profile_id)?;
     let profile = find_profile(app, &request.profile_id)?;
     let scope = request.scope.unwrap_or(SystemdScope::System);
-    let use_sudo = request.use_sudo.unwrap_or(matches!(scope, SystemdScope::System));
+    let use_sudo = request
+        .use_sudo
+        .unwrap_or(matches!(scope, SystemdScope::System));
     let normalized_service_name = normalize_service_name(&request.service_name)?;
 
     with_pooled_session(&profile, |session| {
@@ -532,32 +542,29 @@ pub fn get_systemd_deploy_service_logs(
     }
 
     let profile = find_profile(app, &service.profile_id)?;
-    with_pooled_session(&profile, |session| {
-        match service.log_output_mode {
-            SystemdLogOutputMode::Journal => query_service_logs(
-                session,
-                &service.service_name,
-                service.scope,
-                service.use_sudo,
-                request.lines,
-                request.cursor.as_deref(),
-            ),
-            SystemdLogOutputMode::File => query_service_file_logs(
-                session,
-                service
-                    .log_output_path
-                    .as_deref()
-                    .ok_or_else(|| "log_output_path is required when log_output_mode is file".to_string())?,
-                service.scope,
-                service.use_sudo,
-                request.lines,
-                request.cursor.as_deref(),
-            ),
-            SystemdLogOutputMode::None => Ok(SystemdServiceLogsResult {
-                lines: Vec::new(),
-                cursor: None,
-            }),
-        }
+    with_pooled_session(&profile, |session| match service.log_output_mode {
+        SystemdLogOutputMode::Journal => query_service_logs(
+            session,
+            &service.service_name,
+            service.scope,
+            service.use_sudo,
+            request.lines,
+            request.cursor.as_deref(),
+        ),
+        SystemdLogOutputMode::File => query_service_file_logs(
+            session,
+            service.log_output_path.as_deref().ok_or_else(|| {
+                "log_output_path is required when log_output_mode is file".to_string()
+            })?,
+            service.scope,
+            service.use_sudo,
+            request.lines,
+            request.cursor.as_deref(),
+        ),
+        SystemdLogOutputMode::None => Ok(SystemdServiceLogsResult {
+            lines: Vec::new(),
+            cursor: None,
+        }),
     })
 }
 
@@ -1037,8 +1044,12 @@ fn parse_remote_log_output_mode(
     standard_output: Option<&str>,
     standard_error: Option<&str>,
 ) -> (Option<SystemdLogOutputMode>, Option<String>) {
-    let stdout = standard_output.map(str::trim).filter(|item| !item.is_empty());
-    let stderr = standard_error.map(str::trim).filter(|item| !item.is_empty());
+    let stdout = standard_output
+        .map(str::trim)
+        .filter(|item| !item.is_empty());
+    let stderr = standard_error
+        .map(str::trim)
+        .filter(|item| !item.is_empty());
     let primary = stdout.or(stderr);
 
     let Some(value) = primary else {
@@ -1053,7 +1064,10 @@ fn parse_remote_log_output_mode(
         return (Some(SystemdLogOutputMode::Journal), None);
     }
 
-    if let Some(path) = value.strip_prefix("append:").or_else(|| value.strip_prefix("file:")) {
+    if let Some(path) = value
+        .strip_prefix("append:")
+        .or_else(|| value.strip_prefix("file:"))
+    {
         let normalized = path.trim();
         if !normalized.is_empty() {
             return (
@@ -1359,7 +1373,9 @@ fn validate_log_output(mode: SystemdLogOutputMode, path: Option<&str>) -> Result
         let value = path
             .map(str::trim)
             .filter(|item| !item.is_empty())
-            .ok_or_else(|| "log_output_path is required when log_output_mode is file".to_string())?;
+            .ok_or_else(|| {
+                "log_output_path is required when log_output_mode is file".to_string()
+            })?;
         assert_no_newline(value, "log_output_path")?;
     }
     Ok(())
@@ -1454,7 +1470,9 @@ fn build_unit_content(
             let path = log_output_path
                 .map(str::trim)
                 .filter(|item| !item.is_empty())
-                .ok_or_else(|| "log_output_path is required when log_output_mode is file".to_string())?;
+                .ok_or_else(|| {
+                    "log_output_path is required when log_output_mode is file".to_string()
+                })?;
             lines.push(format!("StandardOutput=append:{path}"));
             lines.push(format!("StandardError=append:{path}"));
         }
@@ -1592,7 +1610,8 @@ fn build_connection_key(profile: &ConnectionProfile, auth: &AuthConfig) -> Syste
 }
 
 fn systemd_connection_pool() -> &'static Mutex<HashMap<SystemdConnectionKey, Arc<Mutex<Session>>>> {
-    static POOL: OnceLock<Mutex<HashMap<SystemdConnectionKey, Arc<Mutex<Session>>>>> = OnceLock::new();
+    static POOL: OnceLock<Mutex<HashMap<SystemdConnectionKey, Arc<Mutex<Session>>>>> =
+        OnceLock::new();
     POOL.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -1808,7 +1827,8 @@ fn ensure_unique_service_name(
         if current_id.is_some_and(|id| item.id == id) {
             return false;
         }
-        item.service_name.eq_ignore_ascii_case(normalized_service_name)
+        item.service_name
+            .eq_ignore_ascii_case(normalized_service_name)
     });
     if duplicated {
         return Err(format!(

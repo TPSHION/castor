@@ -199,7 +199,9 @@ where
             found: false,
             binary_path: None,
             version: None,
-            message: Some("not found in current shell PATH or related environment variables".to_string()),
+            message: Some(
+                "not found in current shell PATH or related environment variables".to_string(),
+            ),
             checked_at,
             matches: vec![],
         };
@@ -348,7 +350,10 @@ exit 0
     )
 }
 
-fn resolve_binary_paths_by_script(session: &mut Session, script: &str) -> Result<Vec<String>, String> {
+fn resolve_binary_paths_by_script(
+    session: &mut Session,
+    script: &str,
+) -> Result<Vec<String>, String> {
     let (stdout, _, _) = run_remote_bash_script(session, script)?;
     Ok(normalize_candidate_paths(&stdout))
 }
@@ -368,7 +373,11 @@ fn normalize_candidate_paths(source: &str) -> Vec<String> {
 
         let candidate = if let Some(index) = trimmed.find(" is ") {
             let rhs = trimmed[index + 4..].trim();
-            if rhs.is_empty() { trimmed } else { rhs }
+            if rhs.is_empty() {
+                trimmed
+            } else {
+                rhs
+            }
         } else {
             trimmed
         };
@@ -404,7 +413,8 @@ fn connect_ssh_profile(profile: &ConnectionProfile) -> Result<Session, String> {
     let _ = tcp.set_read_timeout(Some(Duration::from_secs(10)));
     let _ = tcp.set_write_timeout(Some(Duration::from_secs(10)));
 
-    let mut session = Session::new().map_err(|err| format!("failed to create SSH session: {err}"))?;
+    let mut session =
+        Session::new().map_err(|err| format!("failed to create SSH session: {err}"))?;
     session.set_tcp_stream(tcp);
     session
         .handshake()
