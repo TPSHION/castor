@@ -1,10 +1,12 @@
 import type {
   ApplyServerProxyNodeRequest,
   DeleteServerProxyConfigRequest,
+  GetServerProxyRuntimeStatusRequest,
   ListServerProxyConfigsRequest,
   ServerProxyApplyResult,
   ServerProxyConfig,
   ServerProxyConnectivityResult,
+  ServerProxyRuntimeStatusResult,
   SyncServerProxySubscriptionRequest,
   TestServerProxyConnectivityRequest
 } from '../../types';
@@ -32,6 +34,13 @@ export function applyServerProxyNode(request: ApplyServerProxyNodeRequest) {
 export function testServerProxyConnectivity(request: TestServerProxyConnectivityRequest) {
   return invokeTauriWithRequest<ServerProxyConnectivityResult, TestServerProxyConnectivityRequest>(
     'test_server_proxy_connectivity',
+    request
+  );
+}
+
+export function getServerProxyRuntimeStatus(request: GetServerProxyRuntimeStatusRequest) {
+  return invokeTauriWithRequest<ServerProxyRuntimeStatusResult, GetServerProxyRuntimeStatusRequest>(
+    'get_server_proxy_runtime_status',
     request
   );
 }

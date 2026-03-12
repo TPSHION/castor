@@ -81,6 +81,12 @@ pub struct ApplyServerProxyNodeRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct GetServerProxyRuntimeStatusRequest {
+    pub profile_id: String,
+    pub use_sudo: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct TestServerProxyConnectivityRequest {
     pub id: String,
     pub timeout_ms: Option<u64>,
@@ -94,6 +100,20 @@ pub struct ServerProxyApplyResult {
     pub stderr: String,
     pub exit_status: i32,
     pub message: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServerProxyRuntimeStatusResult {
+    pub profile_id: String,
+    pub service_name: String,
+    pub installed: bool,
+    pub active: bool,
+    pub enabled: bool,
+    pub config_exists: bool,
+    pub checked_at: u64,
+    pub message: String,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -361,6 +381,52 @@ pub fn test_server_proxy_connectivity(
             "连通性测试完成：成功 {} / 失败 {}（超时 {}ms）",
             reachable, failed, timeout_ms
         ),
+    })
+}
+
+pub fn get_server_proxy_runtime_status(
+    app: &AppHandle,
+    request: GetServerProxyRuntimeStatusRequest,
+) -> Result<ServerProxyRuntimeStatusResult, String> {
+    let profile_id = request.profile_id.trim();
+    if profile_id.is_empty() {
+        return Err("profile_id is required".to_string());
+    }
+
+    let profile = find_profile(app, profile_id)?;
+    let mut session = connect_ssh_profile(&profile)?;
+    let use_sudo = request.use_sudo.unwrap_or(true);
+    let script = build_runtime_status_script(use_sudo);
+    let (stdout, stderr, exit_status) = run_remote_script(&mut session, &script)?;
+    let parsed = parse_runtime_status_markers(&stdout);
+
+    let installed = parsed.installed.unwrap_or(false);
+    let active = parsed.active.unwrap_or(false);
+    let enabled = parsed.enabled.unwrap_or(false);
+    let config_exists = parsed.config_exists.unwrap_or(false);
+    let message = if exit_status != 0 {
+        "远程代理状态查询失败，请检查日志。".to_string()
+    } else if active && config_exists {
+        "远程服务器已应用代理配置。".to_string()
+    } else if installed && config_exists {
+        "已检测到代理配置文件，但服务未运行。".to_string()
+    } else if installed {
+        "已安装代理组件，但未检测到可用配置。".to_string()
+    } else {
+        "远程服务器尚未应用代理配置。".to_string()
+    };
+
+    Ok(ServerProxyRuntimeStatusResult {
+        profile_id: profile_id.to_string(),
+        service_name: "castor-proxy.service".to_string(),
+        installed,
+        active,
+        enabled,
+        config_exists,
+        checked_at: now_unix(),
+        message,
+        stdout,
+        stderr,
     })
 }
 
@@ -998,6 +1064,80 @@ WantedBy=multi-user.target
         local_mixed_port
     ));
     Ok(script)
+}
+
+fn build_runtime_status_script(use_sudo: bool) -> String {
+    let mut script = String::new();
+    script.push_str("set +e\n");
+    script.push_str(&format!(
+        "CASTOR_USE_SUDO={}\n",
+        if use_sudo { "1" } else { "0" }
+    ));
+    script.push_str("SUDO=\"\"\n");
+    script.push_str("if [ \"$CASTOR_USE_SUDO\" = \"1\" ] && [ \"$(id -u)\" -ne 0 ]; then\n");
+    script.push_str("  if command -v sudo >/dev/null 2>&1; then\n");
+    script.push_str("    SUDO=\"sudo\"\n");
+    script.push_str("  fi\n");
+    script.push_str("fi\n");
+    script
+        .push_str("run_as_root(){ if [ -n \"$SUDO\" ]; then \"$SUDO\" \"$@\"; else \"$@\"; fi }\n");
+    script.push_str("INSTALLED=0\n");
+    script.push_str("if command -v sing-box >/dev/null 2>&1; then INSTALLED=1; fi\n");
+    script.push_str("CONFIG_EXISTS=0\n");
+    script.push_str("if [ -f /etc/castor/proxy/config.json ]; then CONFIG_EXISTS=1; fi\n");
+    script.push_str("ACTIVE=0\n");
+    script.push_str("ENABLED=0\n");
+    script.push_str("if command -v systemctl >/dev/null 2>&1; then\n");
+    script.push_str("  run_as_root systemctl is-active castor-proxy.service >/dev/null 2>&1\n");
+    script.push_str("  if [ \"$?\" -eq 0 ]; then ACTIVE=1; fi\n");
+    script.push_str("  run_as_root systemctl is-enabled castor-proxy.service >/dev/null 2>&1\n");
+    script.push_str("  if [ \"$?\" -eq 0 ]; then ENABLED=1; fi\n");
+    script.push_str("fi\n");
+    script.push_str("echo \"__CASTOR_PROXY_STATUS__INSTALLED=$INSTALLED\"\n");
+    script.push_str("echo \"__CASTOR_PROXY_STATUS__CONFIG_EXISTS=$CONFIG_EXISTS\"\n");
+    script.push_str("echo \"__CASTOR_PROXY_STATUS__ACTIVE=$ACTIVE\"\n");
+    script.push_str("echo \"__CASTOR_PROXY_STATUS__ENABLED=$ENABLED\"\n");
+    script
+}
+
+#[derive(Default)]
+struct RuntimeStatusMarkers {
+    installed: Option<bool>,
+    active: Option<bool>,
+    enabled: Option<bool>,
+    config_exists: Option<bool>,
+}
+
+fn parse_runtime_status_markers(stdout: &str) -> RuntimeStatusMarkers {
+    let mut markers = RuntimeStatusMarkers::default();
+    for raw_line in stdout.lines() {
+        let line = raw_line.trim();
+        if let Some(value) = line.strip_prefix("__CASTOR_PROXY_STATUS__INSTALLED=") {
+            markers.installed = parse_marker_bool(value);
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_PROXY_STATUS__CONFIG_EXISTS=") {
+            markers.config_exists = parse_marker_bool(value);
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_PROXY_STATUS__ACTIVE=") {
+            markers.active = parse_marker_bool(value);
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_PROXY_STATUS__ENABLED=") {
+            markers.enabled = parse_marker_bool(value);
+            continue;
+        }
+    }
+    markers
+}
+
+fn parse_marker_bool(value: &str) -> Option<bool> {
+    match value.trim() {
+        "1" | "true" | "TRUE" | "yes" | "YES" => Some(true),
+        "0" | "false" | "FALSE" | "no" | "NO" => Some(false),
+        _ => None,
+    }
 }
 
 fn connect_ssh_profile(profile: &ConnectionProfile) -> Result<Session, String> {

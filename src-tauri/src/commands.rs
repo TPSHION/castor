@@ -57,11 +57,13 @@ use crate::profiles::{
 use crate::proxy::{
     apply_server_proxy_node as apply_server_proxy_node_impl,
     delete_server_proxy_config as delete_server_proxy_config_impl,
+    get_server_proxy_runtime_status as get_server_proxy_runtime_status_impl,
     list_server_proxy_configs as list_server_proxy_configs_impl,
     sync_server_proxy_subscription as sync_server_proxy_subscription_impl,
     test_server_proxy_connectivity as test_server_proxy_connectivity_impl,
-    ApplyServerProxyNodeRequest, DeleteServerProxyConfigRequest, ListServerProxyConfigsRequest,
-    ServerProxyApplyResult, ServerProxyConfig, ServerProxyConnectivityResult,
+    ApplyServerProxyNodeRequest, DeleteServerProxyConfigRequest,
+    GetServerProxyRuntimeStatusRequest, ListServerProxyConfigsRequest, ServerProxyApplyResult,
+    ServerProxyConfig, ServerProxyConnectivityResult, ServerProxyRuntimeStatusResult,
     SyncServerProxySubscriptionRequest, TestServerProxyConnectivityRequest,
 };
 use crate::runtime::{
@@ -296,6 +298,19 @@ pub async fn test_server_proxy_connectivity(
     })
     .await
     .map_err(|err| format!("failed to join test server proxy connectivity task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn get_server_proxy_runtime_status(
+    app: AppHandle,
+    request: GetServerProxyRuntimeStatusRequest,
+) -> Result<ServerProxyRuntimeStatusResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        get_server_proxy_runtime_status_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join get server proxy runtime status task: {err}"))?
 }
 
 #[tauri::command]

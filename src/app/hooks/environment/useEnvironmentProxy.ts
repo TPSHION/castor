@@ -2,12 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   applyServerProxyNode,
   deleteServerProxyConfig,
+  getServerProxyRuntimeStatus,
   listServerProxyConfigs,
   syncServerProxySubscription,
   testServerProxyConnectivity
 } from '../../api/proxy';
 import { formatInvokeError } from '../../helpers';
-import type { ConnectionProfile, ProxyNode, ServerProxyApplyResult, ServerProxyConfig } from '../../../types';
+import type {
+  ConnectionProfile,
+  ProxyNode,
+  ServerProxyApplyResult,
+  ServerProxyConfig,
+  ServerProxyRuntimeStatusResult
+} from '../../../types';
 
 type ProxyApplyLog = {
   timestamp: number;
@@ -34,6 +41,8 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
   const [message, setMessage] = useState<string | null>(null);
   const [messageIsError, setMessageIsError] = useState(false);
   const [lastApplyLog, setLastApplyLog] = useState<ProxyApplyLog | null>(null);
+  const [runtimeStatusBusy, setRuntimeStatusBusy] = useState(false);
+  const [runtimeStatus, setRuntimeStatus] = useState<ServerProxyRuntimeStatusResult | null>(null);
 
   const selectedConfig = useMemo(() => {
     if (!selectedConfigId) {
@@ -179,6 +188,34 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
     []
   );
 
+  const onCheckRuntimeStatus = useCallback(async (profileId: string, useSudo = true) => {
+    const targetProfileId = profileId.trim();
+    if (!targetProfileId) {
+      setMessage('请先选择需要查询的服务器。');
+      setMessageIsError(true);
+      return null;
+    }
+
+    setRuntimeStatusBusy(true);
+    try {
+      const result = await getServerProxyRuntimeStatus({
+        profile_id: targetProfileId,
+        use_sudo: useSudo
+      });
+      setRuntimeStatus(result);
+      setMessage(result.message);
+      setMessageIsError(false);
+      return result;
+    } catch (error) {
+      setRuntimeStatus(null);
+      setMessage(`查询远程代理状态失败：${formatInvokeError(error)}`);
+      setMessageIsError(true);
+      return null;
+    } finally {
+      setRuntimeStatusBusy(false);
+    }
+  }, []);
+
   const onApplyNode = useCallback(
     async (
       config: ServerProxyConfig,
@@ -213,6 +250,9 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
         });
         setMessage(result.message);
         setMessageIsError(!result.success);
+        if (result.success) {
+          void onCheckRuntimeStatus(targetProfileId, useSudo);
+        }
         return result.success;
       } catch (error) {
         setMessage(`应用代理节点失败：${formatInvokeError(error)}`);
@@ -222,7 +262,7 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
         setActionBusy(false);
       }
     },
-    []
+    [onCheckRuntimeStatus]
   );
 
   return {
@@ -236,10 +276,13 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
     message,
     messageIsError,
     lastApplyLog,
+    runtimeStatusBusy,
+    runtimeStatus,
     onLoadConfigs,
     onSyncSubscription,
     onDeleteConfig,
     onTestConnectivity,
+    onCheckRuntimeStatus,
     onApplyNode
   };
 }

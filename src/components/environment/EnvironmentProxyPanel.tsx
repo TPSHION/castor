@@ -34,6 +34,7 @@ function getLatencyLabel(node: ProxyNode): string {
 
 export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfile[] }) {
   const vm = useEnvironmentProxy(profiles);
+  const [activePage, setActivePage] = useState<'nodes' | 'remote_config'>('nodes');
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [addSubscriptionUrl, setAddSubscriptionUrl] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<ServerProxyConfig | null>(null);
@@ -41,8 +42,20 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
   const [applyProfileId, setApplyProfileId] = useState(profiles[0]?.id ?? '');
   const [applyUseSudo, setApplyUseSudo] = useState(true);
   const [applyMixedPort, setApplyMixedPort] = useState(7890);
+  const [remoteConfigNodeId, setRemoteConfigNodeId] = useState('');
   const selectedConfig = vm.selectedConfig;
   const selectedNodes = useMemo(() => selectedConfig?.nodes ?? [], [selectedConfig?.nodes]);
+  const supportedNodes = useMemo(() => selectedNodes.filter((item) => item.supported), [selectedNodes]);
+  const selectedRemoteConfigNode = useMemo(
+    () => supportedNodes.find((item) => item.id === remoteConfigNodeId) ?? supportedNodes[0] ?? null,
+    [remoteConfigNodeId, supportedNodes]
+  );
+  const currentRuntimeStatus = useMemo(() => {
+    if (!vm.runtimeStatus || !applyProfileId) {
+      return null;
+    }
+    return vm.runtimeStatus.profile_id === applyProfileId ? vm.runtimeStatus : null;
+  }, [applyProfileId, vm.runtimeStatus]);
   const noAssistTextInputProps = {
     autoComplete: 'off',
     autoCorrect: 'off',
@@ -69,6 +82,25 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
       setApplyProfileId(preferredProfileId);
     }
   }, [applyTarget, profiles]);
+
+  const onCheckRuntimeStatus = vm.onCheckRuntimeStatus;
+
+  useEffect(() => {
+    if (activePage !== 'remote_config' || !applyProfileId) {
+      return;
+    }
+    void onCheckRuntimeStatus(applyProfileId, applyUseSudo);
+  }, [activePage, applyProfileId, applyUseSudo, onCheckRuntimeStatus]);
+
+  useEffect(() => {
+    if (supportedNodes.length === 0) {
+      setRemoteConfigNodeId('');
+      return;
+    }
+    if (!remoteConfigNodeId || !supportedNodes.some((item) => item.id === remoteConfigNodeId)) {
+      setRemoteConfigNodeId(supportedNodes[0].id);
+    }
+  }, [remoteConfigNodeId, supportedNodes]);
 
   const onOpenAddDialog = () => {
     setAddSubscriptionUrl(selectedConfig?.subscription_url ?? '');
@@ -107,24 +139,150 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
     }
   };
 
+  const onDeployFromRemoteConfig = async () => {
+    if (!selectedConfig || !selectedRemoteConfigNode) {
+      return;
+    }
+    await vm.onApplyNode(
+      selectedConfig,
+      selectedRemoteConfigNode,
+      applyProfileId,
+      applyUseSudo,
+      applyMixedPort
+    );
+  };
+
   return (
     <section className="environment-proxy-page">
       <div className="environment-proxy-page-body">
         <div className="section-header environment-proxy-header">
-          <h2>远程代理管理</h2>
+          <h2>{activePage === 'nodes' ? '远程代理管理' : '远程代理配置管理'}</h2>
           <div className="section-actions">
-            <button type="button" onClick={() => void vm.onLoadConfigs()} disabled={vm.listBusy || vm.actionBusy}>
-              {vm.listBusy ? '刷新中...' : '刷新配置'}
-            </button>
-            <button type="button" onClick={onOpenAddDialog} disabled={vm.actionBusy}>
-              添加订阅
-            </button>
+            {activePage === 'nodes' ? (
+              <>
+                <button type="button" onClick={() => void vm.onLoadConfigs()} disabled={vm.listBusy || vm.actionBusy}>
+                  {vm.listBusy ? '刷新中...' : '刷新配置'}
+                </button>
+                <button type="button" onClick={onOpenAddDialog} disabled={vm.actionBusy}>
+                  添加订阅
+                </button>
+              </>
+            ) : (
+              <button type="button" onClick={() => setActivePage('nodes')} disabled={vm.actionBusy}>
+                返回订阅节点
+              </button>
+            )}
           </div>
         </div>
 
         {vm.message && <p className={vm.messageIsError ? 'status-line error' : 'status-line'}>{vm.message}</p>}
 
-        {vm.configs.length === 0 ? (
+        {activePage === 'remote_config' ? (
+          <section className="host-card environment-proxy-card">
+            <header className="host-card-header">
+              <div>
+                <h3>远程代理配置</h3>
+                <p>管理“应用到服务器”时默认使用的远程代理参数。</p>
+              </div>
+              <span className="chip">配置中心</span>
+            </header>
+
+            <div className="environment-proxy-form-grid">
+              <label className="field-label">
+                默认目标服务器
+                <select value={applyProfileId} onChange={(event) => setApplyProfileId(event.target.value)} disabled={vm.actionBusy}>
+                  <option value="">请选择服务器</option>
+                  {profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name} ({profile.username}@{profile.host}:{profile.port})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-label">
+                默认代理端口
+                <input
+                  type="number"
+                  min={1024}
+                  max={65535}
+                  value={applyMixedPort}
+                  onChange={(event) => setApplyMixedPort(Number(event.target.value) || 7890)}
+                  disabled={vm.actionBusy}
+                />
+              </label>
+            </div>
+
+            <label className="environment-proxy-option">
+              <input
+                type="checkbox"
+                checked={applyUseSudo}
+                onChange={(event) => setApplyUseSudo(event.target.checked)}
+                disabled={vm.actionBusy}
+              />
+              默认使用 sudo 权限
+            </label>
+
+            <p className="status-line">
+              这些配置会作为“应用到服务器”弹窗与本页部署操作的默认值。
+            </p>
+
+            <div className="card-actions">
+              <button
+                type="button"
+                onClick={() => void vm.onCheckRuntimeStatus(applyProfileId, applyUseSudo)}
+                disabled={vm.actionBusy || vm.runtimeStatusBusy || !applyProfileId}
+              >
+                {vm.runtimeStatusBusy ? '查询中...' : '查询远程代理状态'}
+              </button>
+            </div>
+
+            {currentRuntimeStatus && (
+              <div className="environment-proxy-state-grid">
+                <p className="status-line">{currentRuntimeStatus.message}</p>
+                <p className="status-line">服务：{currentRuntimeStatus.service_name}</p>
+                <p className="status-line">已安装 sing-box：{currentRuntimeStatus.installed ? '是' : '否'}</p>
+                <p className="status-line">配置文件存在：{currentRuntimeStatus.config_exists ? '是' : '否'}</p>
+                <p className="status-line">服务运行中：{currentRuntimeStatus.active ? '是' : '否'}</p>
+                <p className="status-line">开机自启：{currentRuntimeStatus.enabled ? '是' : '否'}</p>
+                <p className="status-line">查询时间：{formatUnixTime(currentRuntimeStatus.checked_at)}</p>
+              </div>
+            )}
+
+            {selectedConfig && (
+              <div className="environment-proxy-form-grid">
+                <label className="field-label environment-proxy-field-wide">
+                  代理节点
+                  <select
+                    value={selectedRemoteConfigNode?.id ?? ''}
+                    onChange={(event) => setRemoteConfigNodeId(event.target.value)}
+                    disabled={vm.actionBusy || supportedNodes.length === 0}
+                  >
+                    {supportedNodes.length === 0 ? (
+                      <option value="">当前无可部署节点</option>
+                    ) : (
+                      supportedNodes.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name} ({item.server}:{item.port}) {typeof item.latency_ms === 'number' ? `· ${item.latency_ms}ms` : ''}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </label>
+              </div>
+            )}
+
+            <div className="card-actions">
+              <button
+                type="button"
+                onClick={() => void onDeployFromRemoteConfig()}
+                disabled={vm.actionBusy || !selectedConfig || !selectedRemoteConfigNode || !applyProfileId}
+              >
+                {vm.actionBusy ? '应用中...' : currentRuntimeStatus?.active ? '应用/切换节点' : '部署代理配置'}
+              </button>
+            </div>
+          </section>
+        ) : vm.configs.length === 0 ? (
           <section className="host-card environment-proxy-card">
             <div className="empty-state">
               <p>还没有任何订阅解析结果。</p>
@@ -171,6 +329,9 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
               <div className="card-actions">
                 <button type="button" onClick={onOpenAddDialog} disabled={vm.actionBusy}>
                   更新订阅
+                </button>
+                <button type="button" onClick={() => setActivePage('remote_config')} disabled={vm.actionBusy}>
+                  远程代理配置
                 </button>
                 {selectedConfig && (
                   <button

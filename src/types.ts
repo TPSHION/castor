@@ -809,3 +809,21 @@ export type ServerProxyConnectivityResult = {
   timeout_ms: number;
   message: string;
 };
+
+export type GetServerProxyRuntimeStatusRequest = {
+  profile_id: string;
+  use_sudo?: boolean;
+};
+
+export type ServerProxyRuntimeStatusResult = {
+  profile_id: string;
+  service_name: string;
+  installed: boolean;
+  active: boolean;
+  enabled: boolean;
+  config_exists: boolean;
+  checked_at: number;
+  message: string;
+  stdout: string;
+  stderr: string;
+};
