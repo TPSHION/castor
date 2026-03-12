@@ -123,6 +123,38 @@
   font-size: 0.74rem;
 }
 
+.environment-ssl-failure {
+  border: 1px solid #8a4f5e;
+  border-radius: 8px;
+  background: rgb(78 26 37 / 35%);
+  padding: 10px;
+  display: grid;
+  gap: 7px;
+}
+
+.environment-ssl-failure-title {
+  margin: 0;
+  color: #ffd6de;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.environment-ssl-failure-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #f3cbd3;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  display: grid;
+  gap: 2px;
+}
+
+.environment-ssl-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .environment-ssl-table-wrap {
   border: 1px solid #405573;
   border-radius: 9px;

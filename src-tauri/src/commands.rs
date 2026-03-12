@@ -363,6 +363,13 @@ pub fn local_create_dir(request: LocalCreateDirRequest) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn pick_local_directory() -> Result<Option<String>, String> {
+    Ok(rfd::FileDialog::new()
+        .pick_folder()
+        .map(|path| path.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
 pub fn sftp_rename_entry(request: SftpRenameRequest) -> Result<(), String> {
     sftp_rename_entry_impl(request)
 }

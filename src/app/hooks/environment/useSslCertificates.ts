@@ -8,6 +8,7 @@ import {
   syncSslCertificateStatus,
   upsertSslCertificate
 } from '../../api/ssl';
+import { pickLocalDirectory } from '../../api/localfs';
 import { sftpDownloadFile } from '../../api/sftp';
 import { buildAuthFromProfile, formatInvokeError } from '../../helpers';
 import type { ConnectionProfile, SslCertificate, SslDnsEnvVar, SslChallengeType, UpsertSslCertificateRequest } from '../../../types';
@@ -41,6 +42,7 @@ type SslFlowStep = {
 type SslOperationLog = {
   operation: SslOperationType;
   mode: SslOperationMode;
+  certificateId: string | null;
   domain: string;
   success: boolean;
   exitStatus: number;
@@ -517,6 +519,7 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
     setLastOperationLog({
       operation: 'issue',
       mode: 'issue_deploy',
+      certificateId: targetId,
       domain: targetDomain,
       success: false,
       exitStatus: -1,
@@ -535,6 +538,7 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
       setLastOperationLog({
         operation: 'issue',
         mode: 'issue_deploy',
+        certificateId: result.certificate.id,
         domain: result.certificate.domain,
         success: result.success,
         exitStatus: result.exit_status,
@@ -551,7 +555,8 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
       setLastOperationLog({
         operation: 'issue',
         mode: 'issue_deploy',
-        domain: targetId,
+        certificateId: targetId,
+        domain: targetDomain,
         success: false,
         exitStatus: -1,
         stdout: '',
@@ -580,6 +585,7 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
     setLastOperationLog({
       operation: 'issue',
       mode: 'issue_only',
+      certificateId: targetId,
       domain: targetDomain,
       success: false,
       exitStatus: -1,
@@ -598,6 +604,7 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
       setLastOperationLog({
         operation: 'issue',
         mode: 'issue_only',
+        certificateId: result.certificate.id,
         domain: result.certificate.domain,
         success: result.success,
         exitStatus: result.exit_status,
@@ -614,7 +621,8 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
       setLastOperationLog({
         operation: 'issue',
         mode: 'issue_only',
-        domain: targetId,
+        certificateId: targetId,
+        domain: targetDomain,
         success: false,
         exitStatus: -1,
         stdout: '',
@@ -652,6 +660,7 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
     setLastOperationLog({
       operation: 'renew',
       mode: 'renew_deploy',
+      certificateId: certificateId,
       domain: targetDomain,
       success: false,
       exitStatus: -1,
@@ -670,6 +679,7 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
       setLastOperationLog({
         operation: 'renew',
         mode: 'renew_deploy',
+        certificateId: result.certificate.id,
         domain: result.certificate.domain,
         success: result.success,
         exitStatus: result.exit_status,
@@ -686,7 +696,8 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
       setLastOperationLog({
         operation: 'renew',
         mode: 'renew_deploy',
-        domain: certificateId,
+        certificateId: certificateId,
+        domain: targetDomain,
         success: false,
         exitStatus: -1,
         stdout: '',
@@ -703,6 +714,32 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
   const onClearLastOperationLog = useCallback(() => {
     setLastOperationLog(null);
   }, []);
+
+  const onRetryLastOperation = useCallback(async () => {
+    if (!lastOperationLog) {
+      setMessage('暂无可重试的操作记录。');
+      setMessageIsError(true);
+      return;
+    }
+
+    if (!lastOperationLog.certificateId) {
+      setMessage('无法定位证书配置，请重新选择证书后手动执行。');
+      setMessageIsError(true);
+      return;
+    }
+
+    if (lastOperationLog.mode === 'issue_only') {
+      await onIssueCertificate(lastOperationLog.certificateId);
+      return;
+    }
+
+    if (lastOperationLog.mode === 'issue_deploy') {
+      await onApplyCertificate(lastOperationLog.certificateId);
+      return;
+    }
+
+    await onRenewCertificate(lastOperationLog.certificateId);
+  }, [lastOperationLog, onApplyCertificate, onIssueCertificate, onRenewCertificate]);
 
   const onSyncCertificate = useCallback(async (certificateId: string) => {
     setActionBusy(true);
@@ -770,16 +807,25 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
       const remotePath = fileType === 'fullchain' ? certificate.fullchain_file : certificate.key_file;
       const label = fileType === 'fullchain' ? '证书链' : '私钥';
       setActionBusy(true);
-      setMessage(`正在下载${label}文件...`);
+      setMessage(`请选择${label}保存目录...`);
       setMessageIsError(false);
 
       try {
+        const localDir = await pickLocalDirectory();
+        if (!localDir) {
+          setMessage(`已取消下载${label}。`);
+          setMessageIsError(false);
+          return;
+        }
+
+        setMessage(`正在下载${label}文件...`);
         const result = await sftpDownloadFile({
           host: profile.host,
           port: profile.port,
           username: profile.username,
           auth,
-          remote_path: remotePath
+          remote_path: remotePath,
+          local_dir: localDir
         });
         setMessage(`${label}下载完成：${result.local_path}`);
         setMessageIsError(false);
@@ -820,6 +866,7 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
     onSyncCertificate,
     onDeleteCertificate,
     onClearLastOperationLog,
+    onRetryLastOperation,
     onDownloadCertificateFile
   };
 }

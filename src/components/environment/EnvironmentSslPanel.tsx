@@ -1,8 +1,63 @@
+import { useState } from 'react';
 import type { ConnectionProfile } from '../../types';
+import type { SslCertificate } from '../../types';
 import { useSslCertificates } from '../../app/hooks/environment/useSslCertificates';
+
+function buildFailureHints(stepKey?: string, challengeType?: 'http' | 'dns'): string[] {
+  if (stepKey === 'client_ready') {
+    return [
+      '检查服务器是否可访问公网，并可下载 acme.sh（curl/wget）。',
+      '确认当前登录用户有执行安装脚本的权限。',
+      '若服务器受限网络，先手动安装 acme.sh 再重试。'
+    ];
+  }
+
+  if (stepKey === 'request_done') {
+    if (challengeType === 'dns') {
+      return [
+        '核对 DNS 提供商标识是否正确（如 dns_cf / dns_ali）。',
+        '确认 DNS 环境变量键名和值完整，API 权限包含解析记录管理。',
+        '检查域名 DNS 生效情况，必要时等待传播后重试。'
+      ];
+    }
+    return [
+      '确认域名 A/AAAA 记录已指向当前服务器。',
+      '确认 80 端口可被公网访问，且 WebRoot 路径正确。',
+      '在服务器上检查挑战文件目录是否可写并可被访问。'
+    ];
+  }
+
+  if (stepKey === 'deploy_done') {
+    return [
+      '确认 key/fullchain 输出目录存在且当前用户可写。',
+      '若配置了后置命令，确认命令可执行且权限足够（如 reload）。',
+      '建议先排查部署目录权限与服务重载命令，再重试当前操作。'
+    ];
+  }
+
+  if (stepKey === 'renew_plan_done') {
+    return [
+      '确认服务器已安装 crontab，且当前用户可写入计划任务。',
+      '检查 crond/cron 服务是否正常运行。',
+      '修复后点击“重试当前操作”即可重新写入续期计划。'
+    ];
+  }
+
+  if (stepKey === 'metadata_done') {
+    return [
+      '确认 fullchain 文件路径正确且证书文件已落盘。',
+      '确认服务器可执行 openssl 命令读取证书元信息。',
+      '先执行“同步证书状态”，再决定是否重试操作。'
+    ];
+  }
+
+  return ['查看下方 STDERR 关键报错信息，修复后点击“重试当前操作”。'];
+}
 
 export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[] }) {
   const vm = useSslCertificates(profiles);
+  const [pageMode, setPageMode] = useState<'list' | 'form'>('list');
+  const [deleteTarget, setDeleteTarget] = useState<SslCertificate | null>(null);
   const lastOperationLog = vm.lastOperationLog;
   const noAssistTextInputProps = {
     autoComplete: 'off',
@@ -17,6 +72,29 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
       : lastOperationLog.mode === 'issue_deploy'
         ? '申请并部署'
         : '续期并部署';
+  const failedStep = lastOperationLog?.steps.find((step) => step.status === 'failed');
+  const currentCertificate = lastOperationLog?.certificateId
+    ? vm.certificates.find((item) => item.id === lastOperationLog.certificateId) ?? null
+    : null;
+  const lastCertificateId = lastOperationLog?.certificateId ?? undefined;
+  const failureHints = buildFailureHints(failedStep?.key, currentCertificate?.challenge_type);
+  const openCreatePage = () => {
+    vm.onResetDraft();
+    setPageMode('form');
+  };
+  const openEditPage = (item: SslCertificate) => {
+    vm.onPickCertificate(item);
+    setPageMode('form');
+  };
+  const backToList = () => setPageMode('list');
+  const onConfirmDeleteCertificate = async () => {
+    if (!deleteTarget) {
+      return;
+    }
+    const target = deleteTarget;
+    setDeleteTarget(null);
+    await vm.onDeleteCertificate(target.id);
+  };
 
   return (
     <section className="environment-ssl-page">
@@ -44,17 +122,29 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
 
           <div className="environment-ssl-page-body">
             <div className="section-header environment-ssl-header">
-              <h2>SSL证书管理</h2>
+              <h2>{pageMode === 'list' ? 'SSL证书列表' : vm.editingCertificateId ? '编辑证书配置' : '新增证书配置'}</h2>
               <div className="section-actions">
-                <button type="button" onClick={() => void vm.onLoadCertificates()} disabled={vm.actionBusy || vm.listBusy}>
-                  {vm.listBusy ? '刷新中...' : '刷新列表'}
-                </button>
+                {pageMode === 'list' ? (
+                  <>
+                    <button type="button" onClick={() => void vm.onLoadCertificates()} disabled={vm.actionBusy || vm.listBusy}>
+                      {vm.listBusy ? '刷新中...' : '刷新列表'}
+                    </button>
+                    <button type="button" onClick={openCreatePage} disabled={vm.actionBusy}>
+                      新增证书配置
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" onClick={backToList} disabled={vm.actionBusy}>
+                    返回列表
+                  </button>
+                )}
               </div>
             </div>
 
             {vm.message && <p className={vm.messageIsError ? 'status-line error' : 'status-line'}>{vm.message}</p>}
 
-            <section className="host-card environment-ssl-card">
+            {pageMode === 'form' && (
+              <section className="host-card environment-ssl-card">
               <header className="host-card-header">
                 <div>
                   <h3>{vm.editingCertificateId ? '编辑证书配置' : '新建证书配置'}</h3>
@@ -212,12 +302,6 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 <button type="button" onClick={() => void vm.onSaveDraft()} disabled={vm.actionBusy}>
                   {vm.actionBusy ? '处理中...' : vm.editingCertificateId ? '保存配置' : '创建配置'}
                 </button>
-                <button type="button" onClick={() => void vm.onSaveAndIssue()} disabled={vm.actionBusy}>
-                  {vm.actionBusy ? '处理中...' : '仅申请证书'}
-                </button>
-                <button type="button" onClick={() => void vm.onSaveAndApply()} disabled={vm.actionBusy}>
-                  {vm.actionBusy ? '处理中...' : '申请并部署证书'}
-                </button>
                 <button type="button" onClick={vm.onResetDraft} disabled={vm.actionBusy}>
                   重置表单
                 </button>
@@ -243,8 +327,11 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 <p className="environment-ssl-guide-tip">执行时会在下方“最近一次执行日志”实时显示每一步状态，便于定位卡点。</p>
               </div>
             </section>
+            )}
 
-            <section className="host-card environment-ssl-card">
+            {pageMode === 'list' && (
+              <>
+                <section className="host-card environment-ssl-card">
               <header className="host-card-header">
                 <div>
                   <h3>已管理证书</h3>
@@ -282,11 +369,8 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                           <td>{item.auto_renew_enabled ? '已启用' : '未启用'}</td>
                           <td>
                             <div className="environment-ssl-row-actions">
-                              <button type="button" onClick={() => vm.onPickCertificate(item)} disabled={vm.actionBusy}>
+                              <button type="button" onClick={() => openEditPage(item)} disabled={vm.actionBusy}>
                                 编辑
-                              </button>
-                              <button type="button" onClick={() => void vm.onIssueCertificate(item.id)} disabled={vm.actionBusy}>
-                                仅申请
                               </button>
                               <button type="button" onClick={() => void vm.onApplyCertificate(item.id)} disabled={vm.actionBusy}>
                                 申请并部署
@@ -314,11 +398,7 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                               <button
                                 type="button"
                                 className="danger"
-                                onClick={() => {
-                                  if (window.confirm(`确认删除证书配置 ${item.domain} 吗？`)) {
-                                    void vm.onDeleteCertificate(item.id);
-                                  }
-                                }}
+                                onClick={() => setDeleteTarget(item)}
                                 disabled={vm.actionBusy}
                               >
                                 删除
@@ -355,6 +435,38 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
 
                 <p className="status-line">{lastOperationLog.message}</p>
                 <p className="status-line">记录时间：{new Date(lastOperationLog.timestamp).toLocaleString()}</p>
+                {!lastOperationLog.success && (
+                  <div className="environment-ssl-failure">
+                    <p className="environment-ssl-failure-title">
+                      失败处理建议
+                      {failedStep ? ` · 当前卡点：${failedStep.title}` : ''}
+                    </p>
+                    <ul className="environment-ssl-failure-list">
+                      {failureHints.map((hint, index) => (
+                        <li key={`${lastOperationLog.timestamp}-hint-${index}`}>{hint}</li>
+                      ))}
+                    </ul>
+                    <div className="environment-ssl-failure-actions">
+                      <button type="button" onClick={() => void vm.onRetryLastOperation()} disabled={vm.actionBusy}>
+                        {vm.actionBusy ? '处理中...' : '重试当前操作'}
+                      </button>
+                      {lastCertificateId && (
+                        <button
+                          type="button"
+                          onClick={() => void vm.onSyncCertificate(lastCertificateId)}
+                          disabled={vm.actionBusy}
+                        >
+                          同步证书状态
+                        </button>
+                      )}
+                      {currentCertificate && (
+                        <button type="button" onClick={() => openEditPage(currentCertificate)} disabled={vm.actionBusy}>
+                          打开证书配置
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <div className="environment-ssl-flow">
                   <p className="environment-ssl-flow-title">申请流程步骤</p>
@@ -393,7 +505,26 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 </div>
               </section>
             )}
+              </>
+            )}
           </div>
+
+          {deleteTarget && (
+            <div className="systemd-confirm-overlay" role="dialog" aria-modal="true" aria-label="确认删除 SSL 证书配置">
+              <div className="systemd-confirm-modal">
+                <h3>确认删除</h3>
+                <p>将仅删除本地 SSL 管理配置，不会删除远程服务器已落盘的证书文件。</p>
+                <div className="card-actions systemd-confirm-actions">
+                  <button type="button" onClick={() => setDeleteTarget(null)} disabled={vm.actionBusy}>
+                    取消
+                  </button>
+                  <button type="button" className="danger" onClick={() => void onConfirmDeleteCertificate()} disabled={vm.actionBusy}>
+                    {vm.actionBusy ? '删除中...' : '确认删除'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </section>

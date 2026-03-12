@@ -435,7 +435,7 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
             <h2>nginx 配置展示</h2>
             <div className="section-actions">
               <button type="button" onClick={() => void vm.onReloadNginxConfigFile()} disabled={vm.nginxConfigEditorBusy}>
-                {vm.nginxConfigLoading ? '加载中...' : '重新加载'}
+                {vm.nginxConfigLoading ? '加载中...' : '重新获取远程配置'}
               </button>
               <button
                 type="button"
@@ -450,6 +450,14 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
                 disabled={vm.nginxConfigEditorBusy || !vm.nginxConfigDirty || !vm.selectedNginxConfigService}
               >
                 {vm.nginxConfigSaving ? '保存中...' : '保存配置'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void vm.onApplyNginxConfig()}
+                disabled={vm.nginxConfigEditorBusy || !vm.selectedNginxConfigService || vm.nginxConfigDirty}
+                title={vm.nginxConfigDirty ? '请先保存配置后再应用' : undefined}
+              >
+                {vm.nginxConfigApplying ? '应用中...' : '应用配置'}
               </button>
             </div>
           </div>

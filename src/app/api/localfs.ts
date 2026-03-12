@@ -5,7 +5,7 @@ import type {
   LocalListResponse,
   LocalRenameRequest
 } from '../../types';
-import { invokeTauriWithRequest } from './tauri';
+import { invokeTauri, invokeTauriWithRequest } from './tauri';
 
 export function listLocalDir(request: LocalListRequest) {
   return invokeTauriWithRequest<LocalListResponse, LocalListRequest>('list_local_dir', request);
@@ -21,4 +21,8 @@ export function localDeleteEntry(request: LocalDeleteRequest) {
 
 export function localCreateDir(request: LocalCreateDirRequest) {
   return invokeTauriWithRequest<void, LocalCreateDirRequest>('local_create_dir', request);
+}
+
+export function pickLocalDirectory() {
+  return invokeTauri<string | null>('pick_local_directory');
 }

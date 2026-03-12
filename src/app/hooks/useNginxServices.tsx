@@ -147,6 +147,7 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
   const [nginxConfigTesting, setNginxConfigTesting] = useState(false);
   const [nginxConfigLoading, setNginxConfigLoading] = useState(false);
   const [nginxConfigSaving, setNginxConfigSaving] = useState(false);
+  const [nginxConfigApplying, setNginxConfigApplying] = useState(false);
   const [nginxConfigSourcePath, setNginxConfigSourcePath] = useState('');
   const [nginxConfigContent, setNginxConfigContent] = useState('');
   const [nginxConfigOriginalContent, setNginxConfigOriginalContent] = useState('');
@@ -253,6 +254,7 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
   const resetNginxConfigEditor = useCallback(() => {
     setNginxConfigLoading(false);
     setNginxConfigSaving(false);
+    setNginxConfigApplying(false);
     setNginxConfigSourcePath('');
     setNginxConfigContent('');
     setNginxConfigOriginalContent('');
@@ -825,6 +827,52 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     }
   }, [nginxConfigContent, selectedNginxConfigService, showNginxToast]);
 
+  const onApplyNginxConfig = useCallback(async () => {
+    if (!selectedNginxConfigService) {
+      return;
+    }
+    if (nginxConfigDirty) {
+      setNginxMessage('检测到未保存的配置修改，请先保存配置后再应用。');
+      setNginxMessageIsError(true);
+      return;
+    }
+
+    setNginxConfigApplying(true);
+    setNginxConfigValidationErrorDetail(null);
+    setNginxMessage(null);
+    setNginxMessageIsError(false);
+    try {
+      const command = buildControlCommand(selectedNginxConfigService, 'reload');
+      const result = await controlNginxService({ id: selectedNginxConfigService.id, action: 'reload' });
+      setNginxDetailStatus(result.status);
+      setNginxMessage('nginx 配置已应用（reload 成功）');
+      setNginxMessageIsError(false);
+      showNginxToast('success', 'nginx 配置已应用');
+      const operationOutput = [result.stdout.trim(), result.stderr.trim()].filter((item) => item.length > 0).join('\n');
+      appendNginxOperationLog(
+        `配置应用完成（reload，exit=${result.exit_status}）`,
+        `执行命令：\n${command}\n\n命令输出：\n${operationOutput || '(无输出)'}`
+      );
+    } catch (invokeError) {
+      const command = buildControlCommand(selectedNginxConfigService, 'reload');
+      const errorText = formatInvokeError(invokeError);
+      setNginxMessage(`应用配置失败：${errorText}`);
+      setNginxMessageIsError(true);
+      showNginxToast('error', `应用配置失败：${errorText}`);
+      appendNginxOperationLog(
+        '配置应用失败（reload）',
+        `执行命令：\n${command}\n\n错误信息：\n${errorText}`
+      );
+    } finally {
+      setNginxConfigApplying(false);
+    }
+  }, [
+    appendNginxOperationLog,
+    nginxConfigDirty,
+    selectedNginxConfigService,
+    showNginxToast
+  ]);
+
   const onResetNginxConfigContent = useCallback(() => {
     setNginxConfigContent(nginxConfigOriginalContent);
   }, [nginxConfigOriginalContent]);
@@ -843,7 +891,7 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
   const isDetailRunning = nginxDetailStatus?.running ?? false;
   const canDetailStart = !detailActionDisabled && !isDetailRunning;
   const canDetailStop = !detailActionDisabled && isDetailRunning;
-  const nginxConfigEditorBusy = nginxConfigLoading || nginxConfigSaving;
+  const nginxConfigEditorBusy = nginxConfigLoading || nginxConfigSaving || nginxConfigApplying;
 
   return {
     textInputProps,
@@ -860,6 +908,7 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     nginxConfigTesting,
     nginxConfigLoading,
     nginxConfigSaving,
+    nginxConfigApplying,
     nginxConfigEditorBusy,
     nginxConfigSourcePath,
     nginxConfigContent,
@@ -903,6 +952,7 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     onTestNginxConfig,
     onReloadNginxConfigFile,
     onSaveNginxConfigFile,
+    onApplyNginxConfig,
     onResetNginxConfigContent,
     clearNginxOperationLogs,
     clearNginxDeployLogs,
