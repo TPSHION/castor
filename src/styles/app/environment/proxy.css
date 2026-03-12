@@ -1,0 +1,227 @@
+.environment-proxy-page {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.environment-proxy-page-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: #6e7c99 transparent;
+}
+
+.environment-proxy-page-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.environment-proxy-page-body::-webkit-scrollbar-thumb {
+  background: #6e7c99;
+  border-radius: 999px;
+}
+
+.environment-proxy-page-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.environment-proxy-header {
+  margin-bottom: 0;
+}
+
+.environment-proxy-card {
+  gap: 10px;
+}
+
+.environment-proxy-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.environment-proxy-form-grid input,
+.environment-proxy-form-grid select {
+  height: 36px;
+}
+
+.environment-proxy-field-wide {
+  grid-column: 1 / -1;
+}
+
+.environment-proxy-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.environment-proxy-option input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+  padding: 0;
+}
+
+.environment-proxy-guide {
+  border: 1px dashed #476086;
+  border-radius: 8px;
+  background: rgb(22 35 57 / 45%);
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.environment-proxy-guide-title {
+  margin: 0;
+  color: #d8e5fb;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.environment-proxy-guide-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #c4d3ec;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  display: grid;
+  gap: 2px;
+}
+
+.environment-proxy-guide-tip {
+  margin: 0;
+  color: #aebfdd;
+  font-size: 0.74rem;
+}
+
+.environment-proxy-table-wrap {
+  border: 1px solid #405573;
+  border-radius: 9px;
+  overflow-x: auto;
+  background: #141d2f;
+}
+
+.environment-proxy-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.environment-proxy-table th,
+.environment-proxy-table td {
+  border-bottom: 1px solid #324867;
+  padding: 8px;
+  text-align: left;
+  color: #cbd8ef;
+  white-space: nowrap;
+}
+
+.environment-proxy-table th {
+  font-weight: 600;
+  color: #d8e5fb;
+  background: rgb(24 36 58 / 75%);
+}
+
+.environment-proxy-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.environment-proxy-row-active td {
+  background: rgb(44 76 129 / 24%);
+}
+
+.environment-proxy-row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.environment-proxy-status {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #60779f;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: #d3def2;
+  background: rgb(59 74 101 / 22%);
+}
+
+.environment-proxy-status.pending {
+  border-color: #6684b4;
+  color: #d7e6ff;
+  background: rgb(44 76 129 / 30%);
+}
+
+.environment-proxy-status.active {
+  border-color: #2ea66d;
+  color: #b9efcf;
+  background: rgb(34 114 76 / 28%);
+}
+
+.environment-proxy-status.failed {
+  border-color: #b15464;
+  color: #ffd0d8;
+  background: rgb(132 46 64 / 26%);
+}
+
+.environment-proxy-status.unknown {
+  border-color: #5f7499;
+  color: #c9d7f0;
+  background: rgb(60 74 98 / 28%);
+}
+
+.environment-proxy-state-grid {
+  display: grid;
+  gap: 4px;
+}
+
+.environment-proxy-log-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.environment-proxy-log-card {
+  display: grid;
+  gap: 6px;
+}
+
+.environment-proxy-log-title {
+  margin: 0;
+  color: #c9d7f0;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.environment-proxy-log {
+  margin: 0;
+  border: 1px solid #405573;
+  border-radius: 8px;
+  background: #141d2f;
+  color: #c9d7f0;
+  font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  padding: 8px;
+  height: 180px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.environment-proxy-log.stderr {
+  border-color: #7b4451;
+  background: rgb(73 24 34 / 40%);
+  color: #ffd2da;
+}

@@ -733,3 +733,79 @@ export type SslCertificateOperationResult = {
   exit_status: number;
   message: string;
 };
+
+export type ProxyNode = {
+  id: string;
+  name: string;
+  protocol: string;
+  server: string;
+  port: number;
+  method: string;
+  password: string;
+  plugin?: string;
+  supported: boolean;
+  unsupported_reason?: string;
+  raw_uri: string;
+  latency_ms?: number;
+  reachability_status?: 'ok' | 'failed' | string;
+  reachability_error?: string;
+  tested_at?: number;
+};
+
+export type ServerProxyConfig = {
+  id: string;
+  profile_id: string;
+  subscription_url: string;
+  nodes: ProxyNode[];
+  active_node_id?: string;
+  local_http_proxy?: string;
+  local_socks_proxy?: string;
+  status: string;
+  last_error?: string;
+  created_at: number;
+  updated_at: number;
+};
+
+export type ListServerProxyConfigsRequest = {
+  profile_id?: string;
+};
+
+export type SyncServerProxySubscriptionRequest = {
+  profile_id?: string;
+  subscription_url: string;
+};
+
+export type DeleteServerProxyConfigRequest = {
+  id: string;
+};
+
+export type ApplyServerProxyNodeRequest = {
+  id: string;
+  node_id: string;
+  profile_id?: string;
+  use_sudo?: boolean;
+  local_mixed_port?: number;
+};
+
+export type ServerProxyApplyResult = {
+  config: ServerProxyConfig;
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exit_status: number;
+  message: string;
+};
+
+export type TestServerProxyConnectivityRequest = {
+  id: string;
+  timeout_ms?: number;
+};
+
+export type ServerProxyConnectivityResult = {
+  config: ServerProxyConfig;
+  tested: number;
+  reachable: number;
+  failed: number;
+  timeout_ms: number;
+  message: string;
+};

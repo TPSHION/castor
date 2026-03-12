@@ -4,6 +4,7 @@ import { SystemdDeployPanel } from './SystemdDeployPanel';
 import { NginxServicePanel } from './NginxServicePanel';
 import { EnvironmentConfigPanel } from './environment/EnvironmentConfigPanel';
 import { EnvironmentDeployPanel } from './environment/EnvironmentDeployPanel';
+import { EnvironmentProxyPanel } from './environment/EnvironmentProxyPanel';
 import { EnvironmentSslPanel } from './environment/EnvironmentSslPanel';
 
 type ServersViewProps = {
@@ -26,7 +27,8 @@ type ActiveMenu =
   | 'nginx'
   | 'environment_probe'
   | 'environment_deploy'
-  | 'environment_ssl';
+  | 'environment_ssl'
+  | 'environment_proxy';
 type MenuIconName =
   | 'servers'
   | 'settings'
@@ -34,7 +36,8 @@ type MenuIconName =
   | 'nginx'
   | 'environment_probe'
   | 'environment_deploy'
-  | 'environment_ssl';
+  | 'environment_ssl'
+  | 'environment_proxy';
 
 function MenuIcon({ name }: { name: MenuIconName }) {
   if (name === 'servers') {
@@ -89,6 +92,16 @@ function MenuIcon({ name }: { name: MenuIconName }) {
       </svg>
     );
   }
+  if (name === 'environment_proxy') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="6.5" cy="12" r="2.2" />
+        <circle cx="17.5" cy="6.5" r="2.2" />
+        <circle cx="17.5" cy="17.5" r="2.2" />
+        <path d="M8.6 11.1l6.6-3.7M8.6 12.9l6.6 3.7" />
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 4.5l1.8 1.4 2.3-.2.7 2.2 2 1.2-1 2.1 1 2.1-2 1.2-.7 2.2-2.3-.2L12 19.5l-1.8-1.4-2.3.2-.7-2.2-2-1.2 1-2.1-1-2.1 2-1.2.7-2.2 2.3.2L12 4.5z" />
@@ -123,6 +136,7 @@ export function ServersView({
     { id: 'environment_probe', label: '环境探测', icon: 'environment_probe' },
     { id: 'environment_deploy', label: '环境部署', icon: 'environment_deploy' },
     { id: 'environment_ssl', label: 'SSL证书管理', icon: 'environment_ssl' },
+    { id: 'environment_proxy', label: '远程代理管理', icon: 'environment_proxy' },
     { id: 'settings', label: '设置', icon: 'settings' }
   ];
 
@@ -250,6 +264,8 @@ export function ServersView({
           <EnvironmentDeployPanel profiles={profiles} />
         ) : activeMenu === 'environment_ssl' ? (
           <EnvironmentSslPanel profiles={profiles} />
+        ) : activeMenu === 'environment_proxy' ? (
+          <EnvironmentProxyPanel profiles={profiles} />
         ) : (
           <div className="empty-state">设置内容将在这里展示。</div>
         )}

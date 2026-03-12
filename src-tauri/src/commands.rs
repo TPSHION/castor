@@ -54,6 +54,16 @@ use crate::profiles::{
     upsert_connection_profile as upsert_profile_impl, ConnectionProfile,
     DeleteConnectionProfileRequest, UpsertConnectionProfileRequest,
 };
+use crate::proxy::{
+    apply_server_proxy_node as apply_server_proxy_node_impl,
+    delete_server_proxy_config as delete_server_proxy_config_impl,
+    list_server_proxy_configs as list_server_proxy_configs_impl,
+    sync_server_proxy_subscription as sync_server_proxy_subscription_impl,
+    test_server_proxy_connectivity as test_server_proxy_connectivity_impl,
+    ApplyServerProxyNodeRequest, DeleteServerProxyConfigRequest, ListServerProxyConfigsRequest,
+    ServerProxyApplyResult, ServerProxyConfig, ServerProxyConnectivityResult,
+    SyncServerProxySubscriptionRequest, TestServerProxyConnectivityRequest,
+};
 use crate::runtime::{
     cancel_server_runtime_probe as cancel_server_runtime_probe_impl,
     preflight_server_runtime_probe as preflight_server_runtime_probe_impl,
@@ -233,6 +243,59 @@ pub async fn sync_ssl_certificate_status(
     })
     .await
     .map_err(|err| format!("failed to join ssl sync task: {err}"))?
+}
+
+#[tauri::command]
+pub fn list_server_proxy_configs(
+    app: AppHandle,
+    request: ListServerProxyConfigsRequest,
+) -> Result<Vec<ServerProxyConfig>, String> {
+    list_server_proxy_configs_impl(&app, request)
+}
+
+#[tauri::command]
+pub async fn sync_server_proxy_subscription(
+    app: AppHandle,
+    request: SyncServerProxySubscriptionRequest,
+) -> Result<ServerProxyConfig, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        sync_server_proxy_subscription_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join server proxy subscription sync task: {err}"))?
+}
+
+#[tauri::command]
+pub fn delete_server_proxy_config(
+    app: AppHandle,
+    request: DeleteServerProxyConfigRequest,
+) -> Result<(), String> {
+    delete_server_proxy_config_impl(&app, request)
+}
+
+#[tauri::command]
+pub async fn apply_server_proxy_node(
+    app: AppHandle,
+    request: ApplyServerProxyNodeRequest,
+) -> Result<ServerProxyApplyResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || apply_server_proxy_node_impl(&app_handle, request))
+        .await
+        .map_err(|err| format!("failed to join apply server proxy node task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn test_server_proxy_connectivity(
+    app: AppHandle,
+    request: TestServerProxyConnectivityRequest,
+) -> Result<ServerProxyConnectivityResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        test_server_proxy_connectivity_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join test server proxy connectivity task: {err}"))?
 }
 
 #[tauri::command]
