@@ -4,6 +4,12 @@ import { useSslCertificates } from '../../app/hooks/environment/useSslCertificat
 export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[] }) {
   const vm = useSslCertificates(profiles);
   const lastOperationLog = vm.lastOperationLog;
+  const noAssistTextInputProps = {
+    autoComplete: 'off',
+    autoCorrect: 'off',
+    autoCapitalize: 'none',
+    spellCheck: false
+  } as const;
   const operationLabel = !lastOperationLog
     ? ''
     : lastOperationLog.mode === 'issue_only'
@@ -61,6 +67,7 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 <label className="field-label">
                   域名（必填）
                   <input
+                    {...noAssistTextInputProps}
                     type="text"
                     placeholder="example.com 或 *.example.com"
                     value={vm.draft.domain}
@@ -72,6 +79,7 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 <label className="field-label">
                   通知邮箱（可选）
                   <input
+                    {...noAssistTextInputProps}
                     type="email"
                     placeholder="ops@example.com"
                     value={vm.draft.email}
@@ -96,6 +104,7 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                   <label className="field-label">
                     WebRoot 路径（HTTP 必填）
                     <input
+                      {...noAssistTextInputProps}
                       type="text"
                       value={vm.draft.webrootPath}
                       onChange={(event) => vm.onPatchDraft({ webrootPath: event.target.value })}
@@ -106,6 +115,7 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                   <label className="field-label">
                     DNS 提供商标识（DNS 必填）
                     <input
+                      {...noAssistTextInputProps}
                       type="text"
                       placeholder="dns_cf / dns_ali / dns_dp"
                       value={vm.draft.dnsProvider}
@@ -119,6 +129,7 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                   <label className="field-label environment-ssl-field-wide">
                     DNS 环境变量（DNS 按需，每行 KEY=VALUE）
                     <textarea
+                      {...noAssistTextInputProps}
                       rows={4}
                       placeholder={'CF_Token=xxx\nCF_Account_ID=xxx'}
                       value={vm.draft.dnsEnvText}
@@ -131,8 +142,9 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 <label className="field-label">
                   证书私钥路径（必填）
                   <input
+                    {...noAssistTextInputProps}
                     type="text"
-                    placeholder="/etc/ssl/certs/example.com.key"
+                    placeholder={vm.pathExamples.keyFile}
                     value={vm.draft.keyFile}
                     onChange={(event) => vm.onPatchDraft({ keyFile: event.target.value })}
                     disabled={vm.actionBusy}
@@ -142,8 +154,9 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 <label className="field-label">
                   证书链路径（fullchain，必填）
                   <input
+                    {...noAssistTextInputProps}
                     type="text"
-                    placeholder="/etc/ssl/certs/example.com.fullchain.pem"
+                    placeholder={vm.pathExamples.fullchainFile}
                     value={vm.draft.fullchainFile}
                     onChange={(event) => vm.onPatchDraft({ fullchainFile: event.target.value })}
                     disabled={vm.actionBusy}
@@ -153,6 +166,7 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 <label className="field-label environment-ssl-field-wide">
                   申请/续期后执行命令（可选）
                   <input
+                    {...noAssistTextInputProps}
                     type="text"
                     placeholder="例如：systemctl reload my-service"
                     value={vm.draft.reloadCommand}
@@ -211,6 +225,14 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
 
               <div className="environment-ssl-guide">
                 <p className="environment-ssl-guide-title">流程说明（简洁版）</p>
+                <p className="environment-ssl-guide-subtitle">前置要求</p>
+                <ul className="environment-ssl-guide-prereq">
+                  <li>目标域名已解析到当前服务器（HTTP-01）或已准备可用的 DNS API 凭据（DNS-01）。</li>
+                  <li>服务器可访问公网，并可连接 Let&apos;s Encrypt / acme.sh 所需地址。</li>
+                  <li>远程账号对证书输出目录有写权限，必要时可执行 `sudo`/服务重载命令。</li>
+                  <li>HTTP-01 场景需确保 80 端口可访问，且 `WebRoot` 指向站点实际根目录。</li>
+                  <li>DNS-01 场景需填写正确的 DNS 提供商标识及对应环境变量（按提供商文档）。</li>
+                </ul>
                 <ol className="environment-ssl-guide-list">
                   <li>准备 ACME 客户端：检查并安装 `acme.sh`。</li>
                   <li>域名验证并签发：执行 HTTP-01 / DNS-01 挑战。</li>

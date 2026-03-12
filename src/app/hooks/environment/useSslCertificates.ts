@@ -51,6 +51,11 @@ type SslOperationLog = {
   steps: SslFlowStep[];
 };
 
+type SslPathExamples = {
+  keyFile: string;
+  fullchainFile: string;
+};
+
 function createInitialDraft(): SslFormDraft {
   return {
     domain: '',
@@ -65,6 +70,24 @@ function createInitialDraft(): SslFormDraft {
     autoRenewEnabled: true,
     renewBeforeDays: 30,
     renewAt: '03:00'
+  };
+}
+
+function normalizeDomainForPath(value: string): string {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return 'example.com';
+  }
+  const domainWithoutWildcard = trimmed.replace(/^\*\./, '');
+  const safeDomain = domainWithoutWildcard.replace(/[^a-z0-9.-]/g, '-');
+  return safeDomain || 'example.com';
+}
+
+function buildPathExamples(domain: string): SslPathExamples {
+  const normalized = normalizeDomainForPath(domain);
+  return {
+    keyFile: `/etc/ssl/certs/${normalized}.key`,
+    fullchainFile: `/etc/ssl/certs/${normalized}.fullchain.pem`
   };
 }
 
@@ -299,6 +322,7 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
     () => profiles.find((profile) => profile.id === selectedProfileId) ?? null,
     [profiles, selectedProfileId]
   );
+  const pathExamples = useMemo(() => buildPathExamples(draft.domain), [draft.domain]);
 
   const onLoadCertificates = useCallback(async () => {
     if (!selectedProfileId) {
@@ -343,7 +367,28 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
   }, [onLoadCertificates, selectedProfileId]);
 
   const onPatchDraft = useCallback((patch: Partial<SslFormDraft>) => {
-    setDraft((prev) => ({ ...prev, ...patch }));
+    setDraft((prev) => {
+      const next = { ...prev, ...patch };
+      if (!Object.prototype.hasOwnProperty.call(patch, 'domain')) {
+        return next;
+      }
+
+      const oldExamples = buildPathExamples(prev.domain);
+      const nextExamples = buildPathExamples(next.domain);
+      const keyPatched = Object.prototype.hasOwnProperty.call(patch, 'keyFile');
+      const fullchainPatched = Object.prototype.hasOwnProperty.call(patch, 'fullchainFile');
+
+      if (!keyPatched && (!prev.keyFile.trim() || prev.keyFile === oldExamples.keyFile)) {
+        next.keyFile = nextExamples.keyFile;
+      }
+      if (
+        !fullchainPatched &&
+        (!prev.fullchainFile.trim() || prev.fullchainFile === oldExamples.fullchainFile)
+      ) {
+        next.fullchainFile = nextExamples.fullchainFile;
+      }
+      return next;
+    });
   }, []);
 
   const onResetDraft = useCallback(() => {
@@ -760,6 +805,7 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
     lastOperationLog,
     editingCertificateId,
     draft,
+    pathExamples,
     formatStatusLabel,
     onPatchDraft,
     onResetDraft,
