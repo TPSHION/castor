@@ -74,6 +74,38 @@
   padding: 0;
 }
 
+.environment-ssl-guide {
+  border: 1px dashed #476086;
+  border-radius: 8px;
+  background: rgb(22 35 57 / 45%);
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.environment-ssl-guide-title {
+  margin: 0;
+  color: #d8e5fb;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.environment-ssl-guide-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #c4d3ec;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  display: grid;
+  gap: 2px;
+}
+
+.environment-ssl-guide-tip {
+  margin: 0;
+  color: #aebfdd;
+  font-size: 0.74rem;
+}
+
 .environment-ssl-table-wrap {
   border: 1px solid #405573;
   border-radius: 9px;
@@ -151,4 +183,150 @@
   display: inline-flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.environment-ssl-flow {
+  display: grid;
+  gap: 8px;
+}
+
+.environment-ssl-flow-title {
+  margin: 0;
+  color: #d8e5fb;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.environment-ssl-flow-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 7px;
+}
+
+.environment-ssl-flow-step {
+  border: 1px solid #344a70;
+  border-radius: 8px;
+  background: rgb(17 26 43 / 55%);
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.environment-ssl-flow-step.completed {
+  border-color: #2d8a5e;
+  background: rgb(24 50 39 / 48%);
+}
+
+.environment-ssl-flow-step.active {
+  border-color: #4b82d0;
+  background: linear-gradient(120deg, rgb(25 40 65 / 70%), rgb(22 50 94 / 65%));
+}
+
+.environment-ssl-flow-step.failed {
+  border-color: #b15464;
+  background: rgb(75 28 38 / 52%);
+}
+
+.environment-ssl-flow-step.skipped {
+  border-color: #546b91;
+  background: rgb(28 39 59 / 52%);
+}
+
+.environment-ssl-flow-step-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.environment-ssl-flow-step-name {
+  color: #d5e4ff;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.environment-ssl-flow-step-tag {
+  display: inline-flex;
+  border: 1px solid #6d7f9f;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: #d5ddee;
+  background: rgb(59 74 101 / 22%);
+}
+
+.environment-ssl-flow-step-tag.completed {
+  border-color: #2ea66d;
+  color: #b9efcf;
+  background: rgb(34 114 76 / 28%);
+}
+
+.environment-ssl-flow-step-tag.active {
+  border-color: #4b82d0;
+  color: #d7e9ff;
+  background: rgb(38 77 141 / 28%);
+}
+
+.environment-ssl-flow-step-tag.failed {
+  border-color: #b15464;
+  color: #ffd0d8;
+  background: rgb(132 46 64 / 26%);
+}
+
+.environment-ssl-flow-step-tag.skipped {
+  border-color: #546b91;
+  color: #c5d2ea;
+  background: rgb(46 61 87 / 30%);
+}
+
+.environment-ssl-flow-step-desc {
+  margin: 0;
+  color: #b9c8e5;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.environment-ssl-log-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.environment-ssl-log-card {
+  display: grid;
+  gap: 6px;
+}
+
+.environment-ssl-log-title {
+  margin: 0;
+  color: #c9d7f0;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.environment-ssl-log {
+  margin: 0;
+  border: 1px solid #405573;
+  border-radius: 8px;
+  background: #141d2f;
+  color: #c9d7f0;
+  font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  padding: 8px;
+  height: 180px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.environment-ssl-log.stderr {
+  border-color: #7b4451;
+  background: rgb(73 24 34 / 40%);
+  color: #ffd2da;
 }

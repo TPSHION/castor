@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   applySslCertificate,
   deleteSslCertificate,
+  issueSslCertificate,
   listSslCertificates,
   renewSslCertificate,
   syncSslCertificateStatus,
   upsertSslCertificate
 } from '../../api/ssl';
-import { formatInvokeError } from '../../helpers';
+import { sftpDownloadFile } from '../../api/sftp';
+import { buildAuthFromProfile, formatInvokeError } from '../../helpers';
 import type { ConnectionProfile, SslCertificate, SslDnsEnvVar, SslChallengeType, UpsertSslCertificateRequest } from '../../../types';
 
 type SslFormDraft = {
@@ -25,6 +27,30 @@ type SslFormDraft = {
   renewAt: string;
 };
 
+type SslOperationType = 'issue' | 'renew';
+type SslOperationMode = 'issue_only' | 'issue_deploy' | 'renew_deploy';
+type SslFlowStepStatus = 'pending' | 'active' | 'completed' | 'failed' | 'skipped';
+
+type SslFlowStep = {
+  key: string;
+  title: string;
+  description: string;
+  status: SslFlowStepStatus;
+};
+
+type SslOperationLog = {
+  operation: SslOperationType;
+  mode: SslOperationMode;
+  domain: string;
+  success: boolean;
+  exitStatus: number;
+  stdout: string;
+  stderr: string;
+  message: string;
+  timestamp: number;
+  steps: SslFlowStep[];
+};
+
 function createInitialDraft(): SslFormDraft {
   return {
     domain: '',
@@ -35,7 +61,7 @@ function createInitialDraft(): SslFormDraft {
     dnsEnvText: '',
     keyFile: '',
     fullchainFile: '',
-    reloadCommand: 'systemctl reload nginx',
+    reloadCommand: '',
     autoRenewEnabled: true,
     renewBeforeDays: 30,
     renewAt: '03:00'
@@ -82,6 +108,164 @@ function formatStatusLabel(status: SslCertificate['status']) {
   return '待处理';
 }
 
+function createFlowTemplate(mode: SslOperationMode): SslFlowStep[] {
+  if (mode === 'issue_only') {
+    return [
+      {
+        key: 'client_ready',
+        title: '准备 ACME 客户端',
+        description: '检查并安装 acme.sh（如缺失）',
+        status: 'pending'
+      },
+      {
+        key: 'request_done',
+        title: '域名验证并申请证书',
+        description: '执行 HTTP-01 / DNS-01 验证与签发',
+        status: 'pending'
+      },
+      {
+        key: 'deploy_skipped',
+        title: '跳过部署',
+        description: '仅签发，不安装到业务证书路径',
+        status: 'pending'
+      }
+    ];
+  }
+
+  if (mode === 'renew_deploy') {
+    return [
+      {
+        key: 'client_ready',
+        title: '准备 ACME 客户端',
+        description: '检查并安装 acme.sh（如缺失）',
+        status: 'pending'
+      },
+      {
+        key: 'request_done',
+        title: '执行证书续期',
+        description: '按策略检查并续签证书',
+        status: 'pending'
+      },
+      {
+        key: 'deploy_done',
+        title: '安装证书到目标路径',
+        description: '写入 key/fullchain，执行可选后置命令',
+        status: 'pending'
+      },
+      {
+        key: 'renew_plan_done',
+        title: '配置自动续期任务',
+        description: '写入或更新远端 crontab',
+        status: 'pending'
+      },
+      {
+        key: 'metadata_done',
+        title: '同步证书元信息',
+        description: '回填 issuer / 有效期 / 状态',
+        status: 'pending'
+      }
+    ];
+  }
+
+  return [
+    {
+      key: 'client_ready',
+      title: '准备 ACME 客户端',
+      description: '检查并安装 acme.sh（如缺失）',
+      status: 'pending'
+    },
+    {
+      key: 'request_done',
+      title: '域名验证并申请证书',
+      description: '执行 HTTP-01 / DNS-01 验证与签发',
+      status: 'pending'
+    },
+    {
+      key: 'deploy_done',
+      title: '安装证书到目标路径',
+      description: '写入 key/fullchain，执行可选后置命令',
+      status: 'pending'
+    },
+    {
+      key: 'renew_plan_done',
+      title: '配置自动续期任务',
+      description: '写入或更新远端 crontab',
+      status: 'pending'
+    },
+    {
+      key: 'metadata_done',
+      title: '同步证书元信息',
+      description: '回填 issuer / 有效期 / 状态',
+      status: 'pending'
+    }
+  ];
+}
+
+function parseStepMarkers(stdout: string, stderr: string): Set<string> {
+  const markers = new Set<string>();
+  const lines = `${stdout}\n${stderr}`.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line.startsWith('__CASTOR_STEP__')) {
+      continue;
+    }
+    const marker = line.replace('__CASTOR_STEP__', '').trim();
+    if (marker) {
+      markers.add(marker);
+    }
+  }
+  return markers;
+}
+
+function resolveFlowSteps(
+  mode: SslOperationMode,
+  success: boolean,
+  stdout: string,
+  stderr: string
+): SslFlowStep[] {
+  const markers = parseStepMarkers(stdout, stderr);
+  const template = createFlowTemplate(mode);
+
+  const next = template.map((step) => {
+    if (step.key === 'renew_plan_done') {
+      if (markers.has('renew_plan_failed')) {
+        return { ...step, status: 'failed' as const };
+      }
+      if (markers.has('renew_plan_done')) {
+        return { ...step, status: 'completed' as const };
+      }
+      if (markers.has('renew_plan_skipped')) {
+        return { ...step, status: 'skipped' as const };
+      }
+      return step;
+    }
+
+    if (markers.has(step.key)) {
+      return { ...step, status: 'completed' as const };
+    }
+    return step;
+  });
+
+  if (!success) {
+    const failedIndex = next.findIndex((step) => step.status === 'pending');
+    if (failedIndex >= 0) {
+      next[failedIndex] = { ...next[failedIndex], status: 'failed' };
+    } else if (next.length > 0 && next.every((step) => step.status !== 'failed')) {
+      next[next.length - 1] = { ...next[next.length - 1], status: 'failed' };
+    }
+  }
+
+  return next;
+}
+
+function createInProgressFlow(mode: SslOperationMode): SslFlowStep[] {
+  const steps = createFlowTemplate(mode);
+  if (steps.length > 0) {
+    steps[0] = { ...steps[0], status: 'active' };
+  }
+  return steps;
+}
+
 export function useSslCertificates(profiles: ConnectionProfile[]) {
   const loadRequestIdRef = useRef<string | null>(null);
 
@@ -93,6 +277,7 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
   const [actionBusy, setActionBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [messageIsError, setMessageIsError] = useState(false);
+  const [lastOperationLog, setLastOperationLog] = useState<SslOperationLog | null>(null);
 
   useEffect(() => {
     if (profiles.length === 0) {
@@ -179,7 +364,7 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
       dnsEnvText: toDnsEnvText(item.dns_env),
       keyFile: item.key_file,
       fullchainFile: item.fullchain_file,
-      reloadCommand: item.reload_command ?? 'systemctl reload nginx',
+      reloadCommand: item.reload_command ?? '',
       autoRenewEnabled: item.auto_renew_enabled,
       renewBeforeDays: item.renew_before_days,
       renewAt: item.renew_at
@@ -279,23 +464,124 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
       setMessageIsError(true);
       return;
     }
+    const targetDomain = certificates.find((item) => item.id === targetId)?.domain ?? targetId;
 
     setActionBusy(true);
     setMessage('正在申请并部署证书...');
     setMessageIsError(false);
+    setLastOperationLog({
+      operation: 'issue',
+      mode: 'issue_deploy',
+      domain: targetDomain,
+      success: false,
+      exitStatus: -1,
+      stdout: '',
+      stderr: '',
+      message: '正在申请并部署证书...',
+      timestamp: Date.now(),
+      steps: createInProgressFlow('issue_deploy')
+    });
 
     try {
       const result = await applySslCertificate({ id: targetId });
       replaceCertificate(result.certificate);
       setMessage(result.message);
       setMessageIsError(!result.success);
+      setLastOperationLog({
+        operation: 'issue',
+        mode: 'issue_deploy',
+        domain: result.certificate.domain,
+        success: result.success,
+        exitStatus: result.exit_status,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        message: result.message,
+        timestamp: Date.now(),
+        steps: resolveFlowSteps('issue_deploy', result.success, result.stdout, result.stderr)
+      });
     } catch (error) {
-      setMessage(`申请证书失败：${formatInvokeError(error)}`);
+      const errorMessage = formatInvokeError(error);
+      setMessage(`申请证书失败：${errorMessage}`);
       setMessageIsError(true);
+      setLastOperationLog({
+        operation: 'issue',
+        mode: 'issue_deploy',
+        domain: targetId,
+        success: false,
+        exitStatus: -1,
+        stdout: '',
+        stderr: errorMessage,
+        message: `申请证书失败：${errorMessage}`,
+        timestamp: Date.now(),
+        steps: resolveFlowSteps('issue_deploy', false, '', errorMessage)
+      });
     } finally {
       setActionBusy(false);
     }
-  }, [editingCertificateId, replaceCertificate]);
+  }, [certificates, editingCertificateId, replaceCertificate]);
+
+  const onIssueCertificate = useCallback(async (certificateId?: string) => {
+    const targetId = certificateId ?? editingCertificateId;
+    if (!targetId) {
+      setMessage('请先保存证书配置。');
+      setMessageIsError(true);
+      return;
+    }
+    const targetDomain = certificates.find((item) => item.id === targetId)?.domain ?? targetId;
+
+    setActionBusy(true);
+    setMessage('正在申请证书（不部署）...');
+    setMessageIsError(false);
+    setLastOperationLog({
+      operation: 'issue',
+      mode: 'issue_only',
+      domain: targetDomain,
+      success: false,
+      exitStatus: -1,
+      stdout: '',
+      stderr: '',
+      message: '正在申请证书（不部署）...',
+      timestamp: Date.now(),
+      steps: createInProgressFlow('issue_only')
+    });
+
+    try {
+      const result = await issueSslCertificate({ id: targetId });
+      replaceCertificate(result.certificate);
+      setMessage(result.message);
+      setMessageIsError(!result.success);
+      setLastOperationLog({
+        operation: 'issue',
+        mode: 'issue_only',
+        domain: result.certificate.domain,
+        success: result.success,
+        exitStatus: result.exit_status,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        message: result.message,
+        timestamp: Date.now(),
+        steps: resolveFlowSteps('issue_only', result.success, result.stdout, result.stderr)
+      });
+    } catch (error) {
+      const errorMessage = formatInvokeError(error);
+      setMessage(`申请证书失败：${errorMessage}`);
+      setMessageIsError(true);
+      setLastOperationLog({
+        operation: 'issue',
+        mode: 'issue_only',
+        domain: targetId,
+        success: false,
+        exitStatus: -1,
+        stdout: '',
+        stderr: errorMessage,
+        message: `申请证书失败：${errorMessage}`,
+        timestamp: Date.now(),
+        steps: resolveFlowSteps('issue_only', false, '', errorMessage)
+      });
+    } finally {
+      setActionBusy(false);
+    }
+  }, [certificates, editingCertificateId, replaceCertificate]);
 
   const onSaveAndApply = useCallback(async () => {
     const saved = await onSaveDraft();
@@ -305,23 +591,73 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
     await onApplyCertificate(saved.id);
   }, [onApplyCertificate, onSaveDraft]);
 
+  const onSaveAndIssue = useCallback(async () => {
+    const saved = await onSaveDraft();
+    if (!saved) {
+      return;
+    }
+    await onIssueCertificate(saved.id);
+  }, [onIssueCertificate, onSaveDraft]);
+
   const onRenewCertificate = useCallback(async (certificateId: string) => {
+    const targetDomain = certificates.find((item) => item.id === certificateId)?.domain ?? certificateId;
     setActionBusy(true);
     setMessage('正在执行证书续期...');
     setMessageIsError(false);
+    setLastOperationLog({
+      operation: 'renew',
+      mode: 'renew_deploy',
+      domain: targetDomain,
+      success: false,
+      exitStatus: -1,
+      stdout: '',
+      stderr: '',
+      message: '正在执行证书续期...',
+      timestamp: Date.now(),
+      steps: createInProgressFlow('renew_deploy')
+    });
 
     try {
       const result = await renewSslCertificate({ id: certificateId });
       replaceCertificate(result.certificate);
       setMessage(result.message);
       setMessageIsError(!result.success);
+      setLastOperationLog({
+        operation: 'renew',
+        mode: 'renew_deploy',
+        domain: result.certificate.domain,
+        success: result.success,
+        exitStatus: result.exit_status,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        message: result.message,
+        timestamp: Date.now(),
+        steps: resolveFlowSteps('renew_deploy', result.success, result.stdout, result.stderr)
+      });
     } catch (error) {
-      setMessage(`证书续期失败：${formatInvokeError(error)}`);
+      const errorMessage = formatInvokeError(error);
+      setMessage(`证书续期失败：${errorMessage}`);
       setMessageIsError(true);
+      setLastOperationLog({
+        operation: 'renew',
+        mode: 'renew_deploy',
+        domain: certificateId,
+        success: false,
+        exitStatus: -1,
+        stdout: '',
+        stderr: errorMessage,
+        message: `证书续期失败：${errorMessage}`,
+        timestamp: Date.now(),
+        steps: resolveFlowSteps('renew_deploy', false, '', errorMessage)
+      });
     } finally {
       setActionBusy(false);
     }
-  }, [replaceCertificate]);
+  }, [certificates, replaceCertificate]);
+
+  const onClearLastOperationLog = useCallback(() => {
+    setLastOperationLog(null);
+  }, []);
 
   const onSyncCertificate = useCallback(async (certificateId: string) => {
     setActionBusy(true);
@@ -363,6 +699,55 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
     }
   }, [editingCertificateId, removeCertificate]);
 
+  const onDownloadCertificateFile = useCallback(
+    async (certificateId: string, fileType: 'fullchain' | 'key') => {
+      const certificate = certificates.find((item) => item.id === certificateId);
+      if (!certificate) {
+        setMessage('目标证书不存在。');
+        setMessageIsError(true);
+        return;
+      }
+
+      const profile = profiles.find((item) => item.id === certificate.profile_id);
+      if (!profile) {
+        setMessage('未找到证书对应的服务器配置。');
+        setMessageIsError(true);
+        return;
+      }
+
+      const auth = buildAuthFromProfile(profile);
+      if (!auth) {
+        setMessage(`服务器 ${profile.name} 缺少可用凭据，请先编辑并保存。`);
+        setMessageIsError(true);
+        return;
+      }
+
+      const remotePath = fileType === 'fullchain' ? certificate.fullchain_file : certificate.key_file;
+      const label = fileType === 'fullchain' ? '证书链' : '私钥';
+      setActionBusy(true);
+      setMessage(`正在下载${label}文件...`);
+      setMessageIsError(false);
+
+      try {
+        const result = await sftpDownloadFile({
+          host: profile.host,
+          port: profile.port,
+          username: profile.username,
+          auth,
+          remote_path: remotePath
+        });
+        setMessage(`${label}下载完成：${result.local_path}`);
+        setMessageIsError(false);
+      } catch (error) {
+        setMessage(`${label}下载失败：${formatInvokeError(error)}`);
+        setMessageIsError(true);
+      } finally {
+        setActionBusy(false);
+      }
+    },
+    [certificates, profiles]
+  );
+
   return {
     selectedProfileId,
     setSelectedProfileId,
@@ -372,6 +757,7 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
     actionBusy,
     message,
     messageIsError,
+    lastOperationLog,
     editingCertificateId,
     draft,
     formatStatusLabel,
@@ -380,10 +766,14 @@ export function useSslCertificates(profiles: ConnectionProfile[]) {
     onLoadCertificates,
     onPickCertificate,
     onSaveDraft,
+    onSaveAndIssue,
     onSaveAndApply,
+    onIssueCertificate,
     onApplyCertificate,
     onRenewCertificate,
     onSyncCertificate,
-    onDeleteCertificate
+    onDeleteCertificate,
+    onClearLastOperationLog,
+    onDownloadCertificateFile
   };
 }

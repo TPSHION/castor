@@ -3,6 +3,14 @@ import { useSslCertificates } from '../../app/hooks/environment/useSslCertificat
 
 export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[] }) {
   const vm = useSslCertificates(profiles);
+  const lastOperationLog = vm.lastOperationLog;
+  const operationLabel = !lastOperationLog
+    ? ''
+    : lastOperationLog.mode === 'issue_only'
+      ? '仅申请'
+      : lastOperationLog.mode === 'issue_deploy'
+        ? '申请并部署'
+        : '续期并部署';
 
   return (
     <section className="environment-ssl-page">
@@ -44,14 +52,14 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
               <header className="host-card-header">
                 <div>
                   <h3>{vm.editingCertificateId ? '编辑证书配置' : '新建证书配置'}</h3>
-                  <p>配置 Let&apos;s Encrypt 申请参数、部署路径与自动续期策略。</p>
+                  <p>配置 Let&apos;s Encrypt 申请参数、证书落盘路径与自动续期策略。</p>
                 </div>
                 <span className="chip">ACME</span>
               </header>
 
               <div className="environment-ssl-form-grid">
                 <label className="field-label">
-                  域名
+                  域名（必填）
                   <input
                     type="text"
                     placeholder="example.com 或 *.example.com"
@@ -62,7 +70,7 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 </label>
 
                 <label className="field-label">
-                  通知邮箱
+                  通知邮箱（可选）
                   <input
                     type="email"
                     placeholder="ops@example.com"
@@ -73,7 +81,7 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 </label>
 
                 <label className="field-label">
-                  挑战方式
+                  挑战方式（必填）
                   <select
                     value={vm.draft.challengeType}
                     onChange={(event) => vm.onPatchDraft({ challengeType: event.target.value as 'http' | 'dns' })}
@@ -86,7 +94,7 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
 
                 {vm.draft.challengeType === 'http' ? (
                   <label className="field-label">
-                    WebRoot 路径
+                    WebRoot 路径（HTTP 必填）
                     <input
                       type="text"
                       value={vm.draft.webrootPath}
@@ -96,7 +104,7 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                   </label>
                 ) : (
                   <label className="field-label">
-                    DNS 提供商标识
+                    DNS 提供商标识（DNS 必填）
                     <input
                       type="text"
                       placeholder="dns_cf / dns_ali / dns_dp"
@@ -109,7 +117,7 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
 
                 {vm.draft.challengeType === 'dns' && (
                   <label className="field-label environment-ssl-field-wide">
-                    DNS 环境变量（每行 KEY=VALUE）
+                    DNS 环境变量（DNS 按需，每行 KEY=VALUE）
                     <textarea
                       rows={4}
                       placeholder={'CF_Token=xxx\nCF_Account_ID=xxx'}
@@ -121,10 +129,10 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 )}
 
                 <label className="field-label">
-                  证书私钥路径
+                  证书私钥路径（必填）
                   <input
                     type="text"
-                    placeholder="/etc/nginx/ssl/example.com.key"
+                    placeholder="/etc/ssl/certs/example.com.key"
                     value={vm.draft.keyFile}
                     onChange={(event) => vm.onPatchDraft({ keyFile: event.target.value })}
                     disabled={vm.actionBusy}
@@ -132,10 +140,10 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 </label>
 
                 <label className="field-label">
-                  证书链路径（fullchain）
+                  证书链路径（fullchain，必填）
                   <input
                     type="text"
-                    placeholder="/etc/nginx/ssl/example.com.fullchain.pem"
+                    placeholder="/etc/ssl/certs/example.com.fullchain.pem"
                     value={vm.draft.fullchainFile}
                     onChange={(event) => vm.onPatchDraft({ fullchainFile: event.target.value })}
                     disabled={vm.actionBusy}
@@ -143,10 +151,10 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 </label>
 
                 <label className="field-label environment-ssl-field-wide">
-                  续期后重载命令
+                  申请/续期后执行命令（可选）
                   <input
                     type="text"
-                    placeholder="systemctl reload nginx"
+                    placeholder="例如：systemctl reload my-service"
                     value={vm.draft.reloadCommand}
                     onChange={(event) => vm.onPatchDraft({ reloadCommand: event.target.value })}
                     disabled={vm.actionBusy}
@@ -164,7 +172,7 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 </label>
 
                 <label className="field-label">
-                  续期阈值（天）
+                  续期阈值（天，必填）
                   <input
                     type="number"
                     min={1}
@@ -176,7 +184,7 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 </label>
 
                 <label className="field-label">
-                  续期执行时间
+                  续期执行时间（必填）
                   <input
                     type="time"
                     value={vm.draft.renewAt}
@@ -190,12 +198,27 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 <button type="button" onClick={() => void vm.onSaveDraft()} disabled={vm.actionBusy}>
                   {vm.actionBusy ? '处理中...' : vm.editingCertificateId ? '保存配置' : '创建配置'}
                 </button>
+                <button type="button" onClick={() => void vm.onSaveAndIssue()} disabled={vm.actionBusy}>
+                  {vm.actionBusy ? '处理中...' : '仅申请证书'}
+                </button>
                 <button type="button" onClick={() => void vm.onSaveAndApply()} disabled={vm.actionBusy}>
                   {vm.actionBusy ? '处理中...' : '申请并部署证书'}
                 </button>
                 <button type="button" onClick={vm.onResetDraft} disabled={vm.actionBusy}>
                   重置表单
                 </button>
+              </div>
+
+              <div className="environment-ssl-guide">
+                <p className="environment-ssl-guide-title">流程说明（简洁版）</p>
+                <ol className="environment-ssl-guide-list">
+                  <li>准备 ACME 客户端：检查并安装 `acme.sh`。</li>
+                  <li>域名验证并签发：执行 HTTP-01 / DNS-01 挑战。</li>
+                  <li>可选部署：写入 key/fullchain 并执行后置命令（仅“申请并部署/续期”执行）。</li>
+                  <li>自动续期计划：按配置写入远端 crontab（部署模式）。</li>
+                  <li>同步元信息：回填签发方、有效期、状态。</li>
+                </ol>
+                <p className="environment-ssl-guide-tip">执行时会在下方“最近一次执行日志”实时显示每一步状态，便于定位卡点。</p>
               </div>
             </section>
 
@@ -240,14 +263,31 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                               <button type="button" onClick={() => vm.onPickCertificate(item)} disabled={vm.actionBusy}>
                                 编辑
                               </button>
+                              <button type="button" onClick={() => void vm.onIssueCertificate(item.id)} disabled={vm.actionBusy}>
+                                仅申请
+                              </button>
                               <button type="button" onClick={() => void vm.onApplyCertificate(item.id)} disabled={vm.actionBusy}>
-                                申请
+                                申请并部署
                               </button>
                               <button type="button" onClick={() => void vm.onRenewCertificate(item.id)} disabled={vm.actionBusy}>
                                 续期
                               </button>
                               <button type="button" onClick={() => void vm.onSyncCertificate(item.id)} disabled={vm.actionBusy}>
                                 同步
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void vm.onDownloadCertificateFile(item.id, 'fullchain')}
+                                disabled={vm.actionBusy}
+                              >
+                                下载链
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void vm.onDownloadCertificateFile(item.id, 'key')}
+                                disabled={vm.actionBusy}
+                              >
+                                下载Key
                               </button>
                               <button
                                 type="button"
@@ -270,6 +310,67 @@ export function EnvironmentSslPanel({ profiles }: { profiles: ConnectionProfile[
                 </div>
               )}
             </section>
+
+            {lastOperationLog && (
+              <section className="host-card environment-ssl-card">
+                <header className="host-card-header">
+                  <div>
+                    <h3>最近一次执行日志</h3>
+                    <p>
+                      {operationLabel} · {lastOperationLog.domain} ·{' '}
+                      {lastOperationLog.success ? '成功' : '失败'} · exit {lastOperationLog.exitStatus}
+                    </p>
+                  </div>
+                  <div className="section-actions">
+                    <span className={lastOperationLog.success ? 'chip environment-chip found' : 'chip'}>
+                      {lastOperationLog.success ? '成功' : '失败'}
+                    </span>
+                    <button type="button" onClick={vm.onClearLastOperationLog} disabled={vm.actionBusy}>
+                      清空日志
+                    </button>
+                  </div>
+                </header>
+
+                <p className="status-line">{lastOperationLog.message}</p>
+                <p className="status-line">记录时间：{new Date(lastOperationLog.timestamp).toLocaleString()}</p>
+
+                <div className="environment-ssl-flow">
+                  <p className="environment-ssl-flow-title">申请流程步骤</p>
+                  <ol className="environment-ssl-flow-steps">
+                    {lastOperationLog.steps.map((step) => (
+                      <li key={`${lastOperationLog.timestamp}-${step.key}`} className={`environment-ssl-flow-step ${step.status}`}>
+                        <div className="environment-ssl-flow-step-head">
+                          <span className="environment-ssl-flow-step-name">{step.title}</span>
+                          <span className={`environment-ssl-flow-step-tag ${step.status}`}>
+                            {step.status === 'completed'
+                              ? '已完成'
+                              : step.status === 'active'
+                                ? '进行中'
+                                : step.status === 'failed'
+                                  ? '失败'
+                                  : step.status === 'skipped'
+                                    ? '跳过'
+                                    : '待处理'}
+                          </span>
+                        </div>
+                        <p className="environment-ssl-flow-step-desc">{step.description}</p>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+
+                <div className="environment-ssl-log-grid">
+                  <div className="environment-ssl-log-card">
+                    <p className="environment-ssl-log-title">STDOUT</p>
+                    <pre className="environment-ssl-log">{lastOperationLog.stdout || '(empty)'}</pre>
+                  </div>
+                  <div className="environment-ssl-log-card">
+                    <p className="environment-ssl-log-title">STDERR</p>
+                    <pre className="environment-ssl-log stderr">{lastOperationLog.stderr || '(empty)'}</pre>
+                  </div>
+                </div>
+              </section>
+            )}
           </div>
         </>
       )}

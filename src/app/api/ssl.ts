@@ -1,6 +1,7 @@
 import type {
   ApplySslCertificateRequest,
   DeleteSslCertificateRequest,
+  IssueSslCertificateRequest,
   ListSslCertificatesRequest,
   RenewSslCertificateRequest,
   SslCertificate,
@@ -24,6 +25,10 @@ export function deleteSslCertificate(request: DeleteSslCertificateRequest) {
 
 export function applySslCertificate(request: ApplySslCertificateRequest) {
   return invokeTauriWithRequest<SslCertificateOperationResult, ApplySslCertificateRequest>('apply_ssl_certificate', request);
+}
+
+export function issueSslCertificate(request: IssueSslCertificateRequest) {
+  return invokeTauriWithRequest<SslCertificateOperationResult, IssueSslCertificateRequest>('issue_ssl_certificate', request);
 }
 
 export function renewSslCertificate(request: RenewSslCertificateRequest) {

@@ -96,6 +96,12 @@ pub struct ApplySslCertificateRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct IssueSslCertificateRequest {
+    pub id: String,
+    pub force: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RenewSslCertificateRequest {
     pub id: String,
     pub force: Option<bool>,
@@ -248,6 +254,20 @@ pub fn apply_ssl_certificate(
         request.id.as_str(),
         "issue",
         request.force.unwrap_or(false),
+        true,
+    )
+}
+
+pub fn issue_ssl_certificate(
+    app: &AppHandle,
+    request: IssueSslCertificateRequest,
+) -> Result<SslCertificateOperationResult, String> {
+    execute_ssl_certificate_operation(
+        app,
+        request.id.as_str(),
+        "issue",
+        request.force.unwrap_or(false),
+        false,
     )
 }
 
@@ -260,6 +280,7 @@ pub fn renew_ssl_certificate(
         request.id.as_str(),
         "renew",
         request.force.unwrap_or(false),
+        true,
     )
 }
 
@@ -317,6 +338,7 @@ fn execute_ssl_certificate_operation(
     cert_id: &str,
     operation: &str,
     force: bool,
+    deploy_after_issue: bool,
 ) -> Result<SslCertificateOperationResult, String> {
     let cert_id = cert_id.trim();
     if cert_id.is_empty() {
@@ -332,8 +354,8 @@ fn execute_ssl_certificate_operation(
     update_ssl_certificate(app, &certificate)?;
 
     let mut session = connect_ssh_profile(&profile)?;
-    let script = build_operation_script(&certificate, operation, force)?;
-    let (stdout, stderr, exit_status) = run_remote_script(&mut session, &script)?;
+    let script = build_operation_script(&certificate, operation, force, deploy_after_issue)?;
+    let (mut stdout, mut stderr, exit_status) = run_remote_script(&mut session, &script)?;
 
     if exit_status != 0 {
         let detail = pick_error_detail(&stdout, &stderr);
@@ -364,10 +386,32 @@ fn execute_ssl_certificate_operation(
         });
     }
 
-    let auto_renew_error = if certificate.auto_renew_enabled {
-        configure_auto_renew_cron(&mut session, &certificate).err()
+    let auto_renew_error = if deploy_after_issue {
+        if certificate.auto_renew_enabled {
+            match configure_auto_renew_cron(&mut session, &certificate) {
+                Ok(()) => {
+                    stdout.push_str("\n__CASTOR_STEP__ renew_plan_done\n");
+                    None
+                }
+                Err(err) => {
+                    stderr.push_str("\n__CASTOR_STEP__ renew_plan_failed\n");
+                    Some(err)
+                }
+            }
+        } else {
+            match remove_auto_renew_cron(&mut session, &certificate.id) {
+                Ok(()) => {
+                    stdout.push_str("\n__CASTOR_STEP__ renew_plan_skipped\n");
+                    None
+                }
+                Err(err) => {
+                    stderr.push_str("\n__CASTOR_STEP__ renew_plan_failed\n");
+                    Some(err)
+                }
+            }
+        }
     } else {
-        remove_auto_renew_cron(&mut session, &certificate.id).err()
+        None
     };
 
     if let Some(schedule_error) = auto_renew_error {
@@ -412,7 +456,7 @@ fn execute_ssl_certificate_operation(
         stdout,
         stderr,
         exit_status,
-        message: format!("证书{op_name}完成。", op_name = operation_label(operation)),
+        message: operation_success_message(operation, deploy_after_issue).to_string(),
     })
 }
 
@@ -424,10 +468,21 @@ fn operation_label(operation: &str) -> &'static str {
     }
 }
 
+fn operation_success_message(operation: &str, deploy_after_issue: bool) -> &'static str {
+    if operation == "renew" {
+        return "证书续期并部署完成。";
+    }
+    if deploy_after_issue {
+        return "证书申请并部署完成。";
+    }
+    "证书申请完成（未部署）。"
+}
+
 fn build_operation_script(
     certificate: &SslCertificate,
     operation: &str,
     force: bool,
+    deploy_after_issue: bool,
 ) -> Result<String, String> {
     let mut script = String::new();
     script.push_str("set -e\n");
@@ -435,6 +490,7 @@ fn build_operation_script(
     script.push_str("ACME_HOME=\"$HOME/.acme.sh\"\n");
     script.push_str("ACME_SH=\"$ACME_HOME/acme.sh\"\n");
     script.push_str("\n");
+    script.push_str("echo \"__CASTOR_STEP__ client_check_start\"\n");
 
     script.push_str("if [ ! -x \"$ACME_SH\" ]; then\n");
     script.push_str("  if command -v curl >/dev/null 2>&1; then\n");
@@ -447,6 +503,7 @@ fn build_operation_script(
     script.push_str("  fi\n");
     script.push_str("fi\n");
     script.push_str("\n");
+    script.push_str("echo \"__CASTOR_STEP__ client_ready\"\n");
 
     script.push_str("if [ ! -x \"$ACME_SH\" ]; then\n");
     script.push_str("  echo \"acme.sh is not available\" >&2\n");
@@ -502,6 +559,7 @@ fn build_operation_script(
     script.push_str("FORCE_FLAG=\"\"\n");
     script.push_str("if [ \"$CASTOR_FORCE\" = \"1\" ]; then FORCE_FLAG=\"--force\"; fi\n");
     script.push_str("\n");
+    script.push_str("echo \"__CASTOR_STEP__ request_start\"\n");
 
     if operation == "renew" {
         script.push_str("\"$ACME_SH\" --renew -d \"$CASTOR_DOMAIN\" --server letsencrypt --days \"$CASTOR_RENEW_BEFORE_DAYS\" $FORCE_FLAG\n");
@@ -531,28 +589,41 @@ fn build_operation_script(
             }
         }
     }
+    script.push_str("echo \"__CASTOR_STEP__ request_done\"\n");
 
-    script.push_str("mkdir -p \"$(dirname -- \"$CASTOR_KEY_FILE\")\" \"$(dirname -- \"$CASTOR_FULLCHAIN_FILE\")\"\n");
+    let should_install_and_reload =
+        operation == "renew" || (operation == "issue" && deploy_after_issue);
+    if should_install_and_reload {
+        script.push_str("echo \"__CASTOR_STEP__ deploy_start\"\n");
+        script.push_str(
+            "mkdir -p \"$(dirname -- \"$CASTOR_KEY_FILE\")\" \"$(dirname -- \"$CASTOR_FULLCHAIN_FILE\")\"\n",
+        );
 
-    if let Some(reload_cmd) = &certificate.reload_command {
-        script.push_str(&format!(
-            "\"$ACME_SH\" --install-cert -d \"$CASTOR_DOMAIN\" --key-file \"$CASTOR_KEY_FILE\" --fullchain-file \"$CASTOR_FULLCHAIN_FILE\" --reloadcmd {}\n",
-            shell_quote(reload_cmd)
-        ));
+        if let Some(reload_cmd) = &certificate.reload_command {
+            script.push_str(&format!(
+                "\"$ACME_SH\" --install-cert -d \"$CASTOR_DOMAIN\" --key-file \"$CASTOR_KEY_FILE\" --fullchain-file \"$CASTOR_FULLCHAIN_FILE\" --reloadcmd {}\n",
+                shell_quote(reload_cmd)
+            ));
+        } else {
+            script.push_str("\"$ACME_SH\" --install-cert -d \"$CASTOR_DOMAIN\" --key-file \"$CASTOR_KEY_FILE\" --fullchain-file \"$CASTOR_FULLCHAIN_FILE\"\n");
+        }
+        script.push_str("echo \"__CASTOR_STEP__ deploy_done\"\n");
+        script.push_str("echo \"__CASTOR_STEP__ metadata_start\"\n");
+
+        script.push_str("echo \"__CASTOR_METADATA_BEGIN__\"\n");
+        script.push_str("if command -v openssl >/dev/null 2>&1; then\n");
+        script.push_str("  openssl x509 -in \"$CASTOR_FULLCHAIN_FILE\" -noout -issuer -startdate -enddate 2>/dev/null || true\n");
+        script.push_str("  if openssl x509 -in \"$CASTOR_FULLCHAIN_FILE\" -checkend \"$((CASTOR_RENEW_BEFORE_DAYS * 86400))\" -noout >/dev/null 2>&1; then\n");
+        script.push_str("    echo \"__CASTOR_EXPIRING=0\"\n");
+        script.push_str("  else\n");
+        script.push_str("    echo \"__CASTOR_EXPIRING=1\"\n");
+        script.push_str("  fi\n");
+        script.push_str("fi\n");
+        script.push_str("echo \"__CASTOR_METADATA_END__\"\n");
+        script.push_str("echo \"__CASTOR_STEP__ metadata_done\"\n");
     } else {
-        script.push_str("\"$ACME_SH\" --install-cert -d \"$CASTOR_DOMAIN\" --key-file \"$CASTOR_KEY_FILE\" --fullchain-file \"$CASTOR_FULLCHAIN_FILE\"\n");
+        script.push_str("echo \"__CASTOR_STEP__ deploy_skipped\"\n");
     }
-
-    script.push_str("echo \"__CASTOR_METADATA_BEGIN__\"\n");
-    script.push_str("if command -v openssl >/dev/null 2>&1; then\n");
-    script.push_str("  openssl x509 -in \"$CASTOR_FULLCHAIN_FILE\" -noout -issuer -startdate -enddate 2>/dev/null || true\n");
-    script.push_str("  if openssl x509 -in \"$CASTOR_FULLCHAIN_FILE\" -checkend \"$((CASTOR_RENEW_BEFORE_DAYS * 86400))\" -noout >/dev/null 2>&1; then\n");
-    script.push_str("    echo \"__CASTOR_EXPIRING=0\"\n");
-    script.push_str("  else\n");
-    script.push_str("    echo \"__CASTOR_EXPIRING=1\"\n");
-    script.push_str("  fi\n");
-    script.push_str("fi\n");
-    script.push_str("echo \"__CASTOR_METADATA_END__\"\n");
 
     Ok(script)
 }

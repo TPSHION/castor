@@ -710,6 +710,11 @@ export type ApplySslCertificateRequest = {
   force?: boolean;
 };
 
+export type IssueSslCertificateRequest = {
+  id: string;
+  force?: boolean;
+};
+
 export type RenewSslCertificateRequest = {
   id: string;
   force?: boolean;

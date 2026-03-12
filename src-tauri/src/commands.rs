@@ -85,13 +85,14 @@ use crate::ssh::{
 use crate::ssl::{
     apply_ssl_certificate as apply_ssl_certificate_impl,
     delete_ssl_certificate as delete_ssl_certificate_impl,
+    issue_ssl_certificate as issue_ssl_certificate_impl,
     list_ssl_certificates as list_ssl_certificates_impl,
     renew_ssl_certificate as renew_ssl_certificate_impl,
     sync_ssl_certificate_status as sync_ssl_certificate_status_impl,
     upsert_ssl_certificate as upsert_ssl_certificate_impl, ApplySslCertificateRequest,
-    DeleteSslCertificateRequest, ListSslCertificatesRequest, RenewSslCertificateRequest,
-    SslCertificate, SslCertificateOperationResult, SyncSslCertificateStatusRequest,
-    UpsertSslCertificateRequest,
+    DeleteSslCertificateRequest, IssueSslCertificateRequest, ListSslCertificatesRequest,
+    RenewSslCertificateRequest, SslCertificate, SslCertificateOperationResult,
+    SyncSslCertificateStatusRequest, UpsertSslCertificateRequest,
 };
 
 #[tauri::command]
@@ -197,6 +198,17 @@ pub async fn apply_ssl_certificate(
     tauri::async_runtime::spawn_blocking(move || apply_ssl_certificate_impl(&app_handle, request))
         .await
         .map_err(|err| format!("failed to join ssl apply task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn issue_ssl_certificate(
+    app: AppHandle,
+    request: IssueSslCertificateRequest,
+) -> Result<SslCertificateOperationResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || issue_ssl_certificate_impl(&app_handle, request))
+        .await
+        .map_err(|err| format!("failed to join ssl issue task: {err}"))?
 }
 
 #[tauri::command]
