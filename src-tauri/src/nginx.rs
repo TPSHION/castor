@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use ssh2::Session;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 use crate::profiles::{list_connection_profiles, ConnectionProfile};
@@ -90,6 +90,12 @@ pub struct ControlNginxServiceRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct DeployNginxServiceRequest {
+    pub id: String,
+    pub deploy_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct TestNginxServiceConfigRequest {
     pub id: String,
 }
@@ -161,6 +167,29 @@ pub struct NginxServiceActionResult {
 }
 
 #[derive(Debug, Serialize)]
+pub struct DeployNginxServiceResult {
+    pub id: String,
+    pub deploy_id: String,
+    pub installed_before: bool,
+    pub nginx_bin: String,
+    pub conf_path: Option<String>,
+    pub pid_path: Option<String>,
+    pub version: Option<String>,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_status: i32,
+    pub deployed_at: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct NginxDeployLogPayload {
+    deploy_id: String,
+    service_id: String,
+    line: String,
+    timestamp: u64,
+}
+
+#[derive(Debug, Serialize)]
 pub struct NginxConfigTestResult {
     pub id: String,
     pub success: bool,
@@ -214,6 +243,8 @@ struct NginxConnectionKey {
     username: String,
     auth_fingerprint: u64,
 }
+
+const NGINX_DEPLOY_LOG_EVENT: &str = "nginx-deploy-log";
 
 pub fn list_nginx_services(app: &AppHandle) -> Result<Vec<NginxService>, String> {
     let mut services = load_nginx_services(app)?;
@@ -395,6 +426,123 @@ pub fn control_nginx_service(
             exit_status,
             status,
         })
+    })
+}
+
+pub fn deploy_nginx_service(
+    app: &AppHandle,
+    request: DeployNginxServiceRequest,
+) -> Result<DeployNginxServiceResult, String> {
+    let deploy_id = request
+        .deploy_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let service = find_nginx_service_by_id(app, &request.id)?;
+    let profile = find_profile(app, &service.profile_id)?;
+
+    push_nginx_deploy_log(
+        app,
+        &deploy_id,
+        &service.id,
+        format!(
+            "开始部署：{} ({})",
+            service.name,
+            profile.host
+        ),
+    );
+
+    let (stdout, stderr, exit_status, installed_before, discovery) = with_pooled_session(
+        &profile,
+        |session| {
+            let command_script = build_deploy_script(&service);
+            let (stdout, exit_status) = run_remote_script_streaming_stdout(
+                session,
+                &command_script,
+                |line| push_nginx_deploy_log(app, &deploy_id, &service.id, line),
+            )?;
+            let stderr = String::new();
+            if exit_status != 0 {
+                let detail = if stderr.trim().is_empty() {
+                    stdout.trim()
+                } else {
+                    stderr.trim()
+                };
+                push_nginx_deploy_log(
+                    app,
+                    &deploy_id,
+                    &service.id,
+                    format!("部署失败：{}", detail),
+                );
+                return Err(format!(
+                    "部署 nginx 失败 (exit code {exit_status}): {}",
+                    if detail.is_empty() {
+                        "unknown error"
+                    } else {
+                        detail
+                    }
+                ));
+            }
+
+            let installed_before = parse_deploy_output_installed_before(&stdout);
+            let discovery = query_remote_nginx(session)?;
+            Ok((stdout, stderr, exit_status, installed_before, discovery))
+        },
+    )?;
+
+    let discovered_bin = discovery
+        .nginx_bin
+        .clone()
+        .ok_or_else(|| "部署完成但未检测到 nginx 命令路径".to_string())?;
+
+    let _services_lock = nginx_services_store_lock()
+        .lock()
+        .map_err(|_| "nginx services store lock poisoned".to_string())?;
+    let mut services = load_nginx_services(app)?;
+    let target = services
+        .iter_mut()
+        .find(|item| item.id == service.id)
+        .ok_or_else(|| format!("nginx service {} not found", service.id))?;
+    target.nginx_bin = discovered_bin.clone();
+    if discovery.conf_path.is_some() {
+        target.conf_path = discovery.conf_path.clone();
+    }
+    if discovery.pid_path.is_some() {
+        target.pid_path = discovery.pid_path.clone();
+    }
+    target.updated_at = now_unix();
+    save_nginx_services(app, &services)?;
+
+    let target_service_id = service.id.clone();
+    push_nginx_deploy_log(
+        app,
+        &deploy_id,
+        &target_service_id,
+        format!(
+            "部署完成：nginx_bin={}{}",
+            discovered_bin,
+            discovery
+                .version
+                .as_deref()
+                .map(|value| format!(", version={value}"))
+                .unwrap_or_default()
+        ),
+    );
+
+    Ok(DeployNginxServiceResult {
+        id: service.id,
+        deploy_id,
+        installed_before,
+        nginx_bin: discovered_bin,
+        conf_path: discovery.conf_path,
+        pid_path: discovery.pid_path,
+        version: discovery.version,
+        stdout,
+        stderr,
+        exit_status,
+        deployed_at: now_unix(),
     })
 }
 
@@ -1468,6 +1616,66 @@ fn build_control_script(service: &NginxService, action: NginxControlAction) -> S
     format!("set -euo pipefail\n{body}\n")
 }
 
+fn build_deploy_script(service: &NginxService) -> String {
+    let command_prefix = if service.use_sudo { "sudo " } else { "" };
+    format!(
+        r#"set -euo pipefail
+installed_before=0
+if command -v nginx >/dev/null 2>&1; then
+  installed_before=1
+fi
+echo "__CASTOR_INSTALLED_BEFORE=$installed_before"
+echo "[step] 检查 nginx 安装状态完成"
+
+if [ "$installed_before" = "0" ]; then
+  echo "[step] 未检测到 nginx，开始安装"
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "[step] 使用 apt-get 安装 nginx"
+    {command_prefix}DEBIAN_FRONTEND=noninteractive apt-get update
+    {command_prefix}DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
+  elif command -v dnf >/dev/null 2>&1; then
+    echo "[step] 使用 dnf 安装 nginx"
+    {command_prefix}dnf install -y nginx
+  elif command -v yum >/dev/null 2>&1; then
+    echo "[step] 使用 yum 安装 nginx"
+    {command_prefix}yum install -y nginx
+  elif command -v zypper >/dev/null 2>&1; then
+    echo "[step] 使用 zypper 安装 nginx"
+    {command_prefix}zypper --non-interactive install nginx
+  elif command -v apk >/dev/null 2>&1; then
+    echo "[step] 使用 apk 安装 nginx"
+    {command_prefix}apk add --no-cache nginx
+  elif command -v pacman >/dev/null 2>&1; then
+    echo "[step] 使用 pacman 安装 nginx"
+    {command_prefix}pacman -Sy --noconfirm nginx
+  else
+    echo "unsupported package manager: cannot install nginx automatically" >&2
+    exit 41
+  fi
+else
+  echo "[step] 检测到已安装 nginx，跳过安装"
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  echo "[step] 执行 systemctl enable/start nginx"
+  {command_prefix}systemctl daemon-reload >/dev/null 2>&1 || true
+  {command_prefix}systemctl enable nginx >/dev/null 2>&1 || true
+  {command_prefix}systemctl start nginx >/dev/null 2>&1 || true
+else
+  echo "[step] 当前系统无 systemctl，跳过服务管理"
+fi
+
+if ! command -v nginx >/dev/null 2>&1; then
+  echo "nginx command still not found after deploy" >&2
+  exit 42
+fi
+
+echo "[step] nginx 部署脚本执行完成"
+"#,
+        command_prefix = command_prefix,
+    )
+}
+
 fn build_test_config_script(service: &NginxService) -> String {
     let conf_arg = service
         .conf_path
@@ -1477,6 +1685,37 @@ fn build_test_config_script(service: &NginxService) -> String {
     let prefix = if service.use_sudo { "sudo " } else { "" };
     let nginx_bin = shell_quote(service.nginx_bin.as_str());
     format!("set -euo pipefail\n{prefix}{nginx_bin} -t{conf_arg}\n")
+}
+
+fn parse_deploy_output_installed_before(raw: &str) -> bool {
+    for line in raw.lines() {
+        if let Some(value) = line.strip_prefix("__CASTOR_INSTALLED_BEFORE=") {
+            return value.trim() == "1";
+        }
+    }
+    false
+}
+
+fn push_nginx_deploy_log(
+    app: &AppHandle,
+    deploy_id: &str,
+    service_id: &str,
+    line: impl Into<String>,
+) {
+    let line = line.into();
+    let normalized = line.trim();
+    if normalized.is_empty() {
+        return;
+    }
+    let _ = app.emit(
+        NGINX_DEPLOY_LOG_EVENT,
+        NginxDeployLogPayload {
+            deploy_id: deploy_id.to_string(),
+            service_id: service_id.to_string(),
+            line: normalized.to_string(),
+            timestamp: now_unix(),
+        },
+    );
 }
 
 fn action_label(action: NginxControlAction) -> &'static str {
@@ -1758,6 +1997,65 @@ fn run_remote_script(session: &mut Session, script: &str) -> Result<(String, Str
         .map_err(|err| format!("failed to read remote exit status: {err}"))?;
 
     Ok((stdout, stderr, exit_status))
+}
+
+fn run_remote_script_streaming_stdout<F>(
+    session: &mut Session,
+    script: &str,
+    mut on_line: F,
+) -> Result<(String, i32), String>
+where
+    F: FnMut(String),
+{
+    let mut channel = session
+        .channel_session()
+        .map_err(|err| format!("failed to open channel: {err}"))?;
+    channel
+        .exec("bash -s 2>&1")
+        .map_err(|err| format!("failed to execute remote shell: {err}"))?;
+
+    channel
+        .write_all(script.as_bytes())
+        .map_err(|err| format!("failed to write remote script: {err}"))?;
+    channel
+        .send_eof()
+        .map_err(|err| format!("failed to send script eof: {err}"))?;
+
+    let mut output = String::new();
+    let mut pending = String::new();
+    let mut buffer = [0u8; 4096];
+
+    loop {
+        let read_size = channel
+            .read(&mut buffer)
+            .map_err(|err| format!("failed reading remote stdout: {err}"))?;
+        if read_size == 0 {
+            break;
+        }
+        let chunk = String::from_utf8_lossy(&buffer[..read_size]).to_string();
+        output.push_str(&chunk);
+        pending.push_str(&chunk);
+
+        while let Some(newline_index) = pending.find('\n') {
+            let line = pending[..newline_index].trim_end_matches('\r').to_string();
+            on_line(line);
+            pending.drain(..=newline_index);
+        }
+    }
+
+    let tail = pending.trim_end_matches('\r').trim().to_string();
+    if !tail.is_empty() {
+        on_line(tail);
+    }
+
+    channel
+        .wait_close()
+        .map_err(|err| format!("failed waiting remote command close: {err}"))?;
+    let exit_status = channel
+        .exit_status()
+        .map_err(|err| format!("failed to read remote exit status: {err}"))?;
+
+    Ok((output, exit_status))
 }
 
 fn load_nginx_services(app: &AppHandle) -> Result<Vec<NginxService>, String> {

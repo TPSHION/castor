@@ -5,6 +5,8 @@ import type {
   ControlSystemdDeployServiceRequest,
   ConnectionProfile,
   DeleteNginxServiceRequest,
+  DeployNginxServiceRequest,
+  DeployNginxServiceResult,
   GetRemoteSystemdServiceTemplateRequest,
   DeleteSystemdDeployServiceRequest,
   DeploySystemdServiceRequest,
@@ -151,6 +153,10 @@ export function getNginxServiceStatus(request: GetNginxServiceStatusRequest) {
 
 export function controlNginxService(request: ControlNginxServiceRequest) {
   return invokeTauriWithRequest<NginxServiceActionResult, ControlNginxServiceRequest>('control_nginx_service', request);
+}
+
+export function deployNginxService(request: DeployNginxServiceRequest) {
+  return invokeTauriWithRequest<DeployNginxServiceResult, DeployNginxServiceRequest>('deploy_nginx_service', request);
 }
 
 export function testNginxServiceConfig(request: TestNginxServiceConfigRequest) {

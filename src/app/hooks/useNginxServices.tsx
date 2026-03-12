@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   controlNginxService,
   deleteNginxService,
+  deployNginxService,
   discoverRemoteNginx,
   getNginxServiceStatus,
   importNginxServiceByParams,
@@ -17,6 +19,7 @@ import type {
   ConnectionProfile,
   NginxControlAction,
   NginxConfigTestResult,
+  NginxDeployLogPayload,
   NginxService,
   NginxServiceStatus
 } from '../../types';
@@ -31,7 +34,7 @@ type NginxToast = {
 function createNginxForm(profile?: ConnectionProfile | null): NginxFormState {
   return {
     profileId: profile?.id ?? '',
-    name: 'nginx',
+    name: buildDefaultNginxServiceName(profile ?? null),
     nginxBin: '/usr/sbin/nginx',
     confPath: '/etc/nginx/nginx.conf',
     pidPath: '',
@@ -82,7 +85,45 @@ function buildConfigTestCommand(service: NginxService): string {
   return `${prefix}${nginxBin} -t${confArg}`;
 }
 
+function buildDefaultNginxServiceName(profile: ConnectionProfile | null): string {
+  if (!profile) {
+    return 'nginx';
+  }
+  return `nginx@${profile.host}`;
+}
+
+function buildUniqueNginxServiceName(
+  services: NginxService[],
+  profileId: string,
+  baseName: string,
+  currentId?: string
+): string {
+  const fallbackBase = baseName.trim() || 'nginx';
+  const normalizedCurrentId = currentId?.trim() || undefined;
+  const existing = new Set(
+    services
+      .filter((item) => item.profile_id === profileId && item.id !== normalizedCurrentId)
+      .map((item) => item.name.trim().toLowerCase())
+  );
+
+  let candidate = fallbackBase;
+  let index = 2;
+  while (existing.has(candidate.toLowerCase())) {
+    candidate = `${fallbackBase}-${index}`;
+    index += 1;
+  }
+  return candidate;
+}
+
+function createNginxDeployId(): string {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `nginx-deploy-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+}
+
 export function useNginxServices(profiles: ConnectionProfile[]) {
+  const activeNginxDeployIdRef = useRef<string | null>(null);
   const textInputProps = {
     autoComplete: 'off',
     autoCorrect: 'off',
@@ -113,6 +154,9 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
   const [nginxConfigValidationErrorDetail, setNginxConfigValidationErrorDetail] = useState<string | null>(null);
   const [nginxLastConfigTestResult, setNginxLastConfigTestResult] = useState<NginxConfigTestResult | null>(null);
   const [nginxOperationLogs, setNginxOperationLogs] = useState<string[]>([]);
+  const [nginxDeployLogs, setNginxDeployLogs] = useState<string[]>([]);
+  const [nginxDeployActiveId, setNginxDeployActiveId] = useState<string | null>(null);
+  const [nginxDeployRunning, setNginxDeployRunning] = useState(false);
   const [nginxDeleteTarget, setNginxDeleteTarget] = useState<NginxService | null>(null);
   const [nginxToast, setNginxToast] = useState<NginxToast | null>(null);
 
@@ -147,6 +191,25 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     return () => window.clearTimeout(timer);
   }, [nginxToast]);
 
+  useEffect(() => {
+    let mounted = true;
+    const unsubscribePromise = listen<NginxDeployLogPayload>('nginx-deploy-log', (event) => {
+      if (!mounted) {
+        return;
+      }
+      const currentDeployId = activeNginxDeployIdRef.current;
+      if (!currentDeployId || event.payload.deploy_id !== currentDeployId) {
+        return;
+      }
+      setNginxDeployLogs((previous) => [...previous, event.payload.line].slice(-500));
+    });
+
+    return () => {
+      mounted = false;
+      void unsubscribePromise.then((unlisten) => unlisten());
+    };
+  }, []);
+
   const profileNameMap = useMemo(() => {
     const map = new Map<string, string>();
     for (const profile of profiles) {
@@ -170,6 +233,21 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     [nginxConfigServiceId, nginxServices]
   );
 
+  const resolveNginxServiceName = useCallback(
+    (profileId: string, currentId?: string, preferredName?: string) => {
+      const existing = currentId
+        ? nginxServices.find((item) => item.id === currentId)
+        : null;
+      if (existing && existing.profile_id === profileId) {
+        return existing.name;
+      }
+      const profile = profiles.find((item) => item.id === profileId) ?? null;
+      const baseName = preferredName?.trim() || buildDefaultNginxServiceName(profile);
+      return buildUniqueNginxServiceName(nginxServices, profileId, baseName, currentId);
+    },
+    [nginxServices, profiles]
+  );
+
   const nginxConfigDirty = nginxConfigContent !== nginxConfigOriginalContent;
 
   const resetNginxConfigEditor = useCallback(() => {
@@ -182,36 +260,15 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     setNginxConfigValidationErrorDetail(null);
   }, []);
 
-  const duplicateNginxName = useMemo(() => {
-    const normalized = nginxForm.name.trim().toLowerCase();
-    if (!normalized || !nginxForm.profileId) {
-      return null;
-    }
-    return (
-      nginxServices.find(
-        (item) =>
-          item.id !== nginxForm.id &&
-          item.profile_id === nginxForm.profileId &&
-          item.name.trim().toLowerCase() === normalized
-      ) ?? null
-    );
-  }, [nginxForm.id, nginxForm.name, nginxForm.profileId, nginxServices]);
-
   const nginxValidation = useMemo(() => {
     if (!nginxForm.profileId) {
       return '请选择目标服务器';
-    }
-    if (!nginxForm.name.trim()) {
-      return '服务名称不能为空';
-    }
-    if (duplicateNginxName) {
-      return `同服务器下名称重复：${duplicateNginxName.name}`;
     }
     if (!nginxForm.nginxBin.trim()) {
       return 'nginx 命令路径不能为空';
     }
     return null;
-  }, [duplicateNginxName, nginxForm.name, nginxForm.nginxBin, nginxForm.profileId]);
+  }, [nginxForm.nginxBin, nginxForm.profileId]);
 
   useEffect(() => {
     if (profiles.length === 0) {
@@ -259,6 +316,20 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     setNginxMessageIsError(false);
     setNginxForm(createNginxForm(profiles[0] ?? null));
     setNginxMode('create');
+  };
+
+  const onStartDeployNginx = () => {
+    setNginxLastConfigTestResult(null);
+    resetNginxConfigEditor();
+    setNginxOperationLogs([]);
+    setNginxDeployLogs([]);
+    setNginxDeployActiveId(null);
+    activeNginxDeployIdRef.current = null;
+    setNginxDeployRunning(false);
+    setNginxMessage(null);
+    setNginxMessageIsError(false);
+    setNginxForm(createNginxForm(profiles[0] ?? null));
+    setNginxMode('deploy');
   };
 
   const onEditNginx = (service: NginxService) => {
@@ -346,6 +417,9 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     resetNginxConfigEditor();
     setNginxLastConfigTestResult(null);
     setNginxOperationLogs([]);
+    setNginxDeployRunning(false);
+    setNginxDeployActiveId(null);
+    activeNginxDeployIdRef.current = null;
     setNginxMode('list');
   };
 
@@ -404,7 +478,11 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
         return;
       }
 
-      const serviceName = nginxForm.name.trim() || `nginx-${selectedNginxProfile?.name ?? 'service'}`;
+      const serviceName = resolveNginxServiceName(
+        nginxForm.profileId,
+        nginxForm.id,
+        buildDefaultNginxServiceName(selectedNginxProfile)
+      );
       const saved = await importNginxServiceByParams({
         id: nginxForm.id,
         profile_id: nginxForm.profileId,
@@ -441,7 +519,11 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
       const saved = await importNginxServiceByParams({
         id: nginxForm.id,
         profile_id: nginxForm.profileId,
-        name: nginxForm.name.trim(),
+        name: resolveNginxServiceName(
+          nginxForm.profileId,
+          nginxForm.id,
+          buildDefaultNginxServiceName(selectedNginxProfile)
+        ),
         nginx_bin: nginxForm.nginxBin.trim(),
         conf_path: nginxForm.confPath.trim() || undefined,
         pid_path: nginxForm.pidPath.trim() || undefined,
@@ -476,7 +558,11 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
       const saved = await upsertNginxService({
         id: nginxForm.id,
         profile_id: nginxForm.profileId,
-        name: nginxForm.name.trim(),
+        name: resolveNginxServiceName(
+          nginxForm.profileId,
+          nginxForm.id,
+          buildDefaultNginxServiceName(selectedNginxProfile)
+        ),
         nginx_bin: nginxForm.nginxBin.trim(),
         conf_path: nginxForm.confPath.trim() || undefined,
         pid_path: nginxForm.pidPath.trim() || undefined,
@@ -535,6 +621,85 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
       setNginxBusy(false);
     }
   };
+
+  const onSubmitDeployNginx = useCallback(async () => {
+    if (!nginxForm.profileId) {
+      setNginxMessage('请先选择目标服务器');
+      setNginxMessageIsError(true);
+      return;
+    }
+
+    setNginxBusy(true);
+    setNginxDeployRunning(true);
+    setNginxMessage(null);
+    setNginxMessageIsError(false);
+    const deployId = createNginxDeployId();
+    activeNginxDeployIdRef.current = deployId;
+    setNginxDeployActiveId(deployId);
+    setNginxDeployLogs([]);
+    try {
+      const profile = profiles.find((item) => item.id === nginxForm.profileId) ?? null;
+      const existingServiceOnProfile =
+        nginxServices.find((item) => item.profile_id === nginxForm.profileId) ?? null;
+
+      const service = await upsertNginxService({
+        id: existingServiceOnProfile?.id,
+        profile_id: nginxForm.profileId,
+        name: resolveNginxServiceName(
+          nginxForm.profileId,
+          existingServiceOnProfile?.id,
+          buildDefaultNginxServiceName(profile)
+        ),
+        nginx_bin: nginxForm.nginxBin.trim() || existingServiceOnProfile?.nginx_bin || '/usr/sbin/nginx',
+        conf_path: nginxForm.confPath.trim() || existingServiceOnProfile?.conf_path || '/etc/nginx/nginx.conf',
+        pid_path: nginxForm.pidPath.trim() || existingServiceOnProfile?.pid_path || undefined,
+        use_sudo: nginxForm.useSudo
+      });
+
+      const result = await deployNginxService({ id: service.id, deploy_id: deployId });
+      const versionText = result.version ? `，版本：${result.version}` : '';
+      const deploySummary = result.installed_before ? 'nginx 已存在，已执行服务启动检查' : 'nginx 部署安装完成';
+      setNginxMessage(`${deploySummary}${versionText}`);
+      setNginxMessageIsError(false);
+      showNginxToast('success', `${deploySummary}${versionText}`);
+      setNginxDeployLogs((previous) =>
+        previous.length > 0 ? previous : [`${deploySummary}${versionText || ''}`]
+      );
+      const operationOutput = [result.stdout.trim(), result.stderr.trim()]
+        .filter((item) => item.length > 0)
+        .join('\n');
+      appendNginxOperationLog(
+        `部署 nginx 完成（exit=${result.exit_status}）`,
+        `检测到命令：${result.nginx_bin}\n\n命令输出：\n${operationOutput || '(无输出)'}`
+      );
+
+      await refreshNginxList();
+    } catch (invokeError) {
+      const errorText = formatInvokeError(invokeError);
+      setNginxMessage(`部署 nginx 失败：${errorText}`);
+      setNginxMessageIsError(true);
+      showNginxToast('error', `部署 nginx 失败：${errorText}`);
+      setNginxDeployLogs((previous) =>
+        previous.length > 0 ? previous : [`部署 nginx 失败：${errorText}`]
+      );
+      appendNginxOperationLog('部署 nginx 失败', `错误信息：\n${errorText}`);
+    } finally {
+      setNginxDeployRunning(false);
+      setNginxBusy(false);
+    }
+  }, [
+    appendNginxOperationLog,
+    nginxForm.confPath,
+    nginxForm.nginxBin,
+    nginxForm.pidPath,
+    nginxForm.profileId,
+    nginxForm.useSudo,
+    nginxServices,
+    profiles,
+    refreshNginxList,
+    resolveNginxServiceName,
+    showNginxToast
+  ]);
 
   const onControlNginx = useCallback(
     async (action: NginxControlAction) => {
@@ -668,6 +833,10 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     setNginxOperationLogs([]);
   }, []);
 
+  const clearNginxDeployLogs = useCallback(() => {
+    setNginxDeployLogs([]);
+  }, []);
+
   const detailActionDisabled =
     nginxBusy || nginxDetailStatusBusy || Boolean(nginxDetailAction) || nginxConfigTesting;
   const detailBackDisabled = Boolean(nginxDetailAction);
@@ -699,6 +868,9 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     nginxConfigValidationErrorDetail,
     nginxLastConfigTestResult,
     nginxOperationLogs,
+    nginxDeployLogs,
+    nginxDeployActiveId,
+    nginxDeployRunning,
     nginxDeleteTarget,
     nginxToast,
     detailActionDisabled,
@@ -706,13 +878,13 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     canDetailStart,
     canDetailStop,
     nginxValidation,
-    duplicateNginxName,
     profileNameMap,
     selectedNginxProfile,
     selectedNginxDetailService,
     selectedNginxConfigService,
     refreshNginxList,
     onStartCreateNginx,
+    onStartDeployNginx,
     onEditNginx,
     onOpenNginxDetail,
     onOpenNginxConfig,
@@ -727,11 +899,13 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     setNginxDeleteTarget,
     refreshNginxDetailStatus,
     onControlNginx,
+    onSubmitDeployNginx,
     onTestNginxConfig,
     onReloadNginxConfigFile,
     onSaveNginxConfigFile,
     onResetNginxConfigContent,
     clearNginxOperationLogs,
+    clearNginxDeployLogs,
     dismissNginxToast,
     setNginxForm,
     setNginxConfigContent

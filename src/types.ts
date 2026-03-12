@@ -522,6 +522,11 @@ export type ControlNginxServiceRequest = {
   action: NginxControlAction;
 };
 
+export type DeployNginxServiceRequest = {
+  id: string;
+  deploy_id?: string;
+};
+
 export type NginxServiceStatus = {
   summary: string;
   running: boolean;
@@ -536,6 +541,27 @@ export type NginxServiceActionResult = {
   stderr: string;
   exit_status: number;
   status: NginxServiceStatus;
+};
+
+export type DeployNginxServiceResult = {
+  id: string;
+  deploy_id: string;
+  installed_before: boolean;
+  nginx_bin: string;
+  conf_path?: string;
+  pid_path?: string;
+  version?: string;
+  stdout: string;
+  stderr: string;
+  exit_status: number;
+  deployed_at: number;
+};
+
+export type NginxDeployLogPayload = {
+  deploy_id: string;
+  service_id: string;
+  line: string;
+  timestamp: number;
 };
 
 export type TestNginxServiceConfigRequest = {

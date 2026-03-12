@@ -28,6 +28,7 @@ use crate::localfs::{
 use crate::nginx::{
     control_nginx_service as control_nginx_service_impl,
     delete_nginx_service as delete_nginx_service_impl,
+    deploy_nginx_service as deploy_nginx_service_impl,
     discover_remote_nginx as discover_remote_nginx_impl,
     get_nginx_service_status as get_nginx_service_status_impl,
     import_nginx_service_by_params as import_nginx_service_by_params_impl,
@@ -38,11 +39,12 @@ use crate::nginx::{
     test_nginx_service_config as test_nginx_service_config_impl,
     upsert_nginx_service as upsert_nginx_service_impl,
     validate_nginx_service_config_content as validate_nginx_service_config_content_impl,
-    ControlNginxServiceRequest, DeleteNginxServiceRequest, DiscoverRemoteNginxRequest,
-    GetNginxServiceStatusRequest, ImportNginxServiceByParamsRequest, NginxConfigTestResult,
-    NginxConfigValidationResult, NginxParsedConfigResult, NginxService, NginxServiceActionResult,
-    NginxServiceConfigFileResult, NginxServiceConfigFileSaveResult, NginxServiceStatus,
-    ParseNginxServiceConfigRequest, ReadNginxServiceConfigFileRequest, RemoteNginxDiscoveryResult,
+    ControlNginxServiceRequest, DeleteNginxServiceRequest, DeployNginxServiceRequest,
+    DeployNginxServiceResult, DiscoverRemoteNginxRequest, GetNginxServiceStatusRequest,
+    ImportNginxServiceByParamsRequest, NginxConfigTestResult, NginxConfigValidationResult,
+    NginxParsedConfigResult, NginxService, NginxServiceActionResult, NginxServiceConfigFileResult,
+    NginxServiceConfigFileSaveResult, NginxServiceStatus, ParseNginxServiceConfigRequest,
+    ReadNginxServiceConfigFileRequest, RemoteNginxDiscoveryResult,
     SaveNginxServiceConfigFileRequest, TestNginxServiceConfigRequest, UpsertNginxServiceRequest,
     ValidateNginxServiceConfigContentRequest,
 };
@@ -480,6 +482,17 @@ pub async fn control_nginx_service(
     tauri::async_runtime::spawn_blocking(move || control_nginx_service_impl(&app_handle, request))
         .await
         .map_err(|err| format!("failed to join nginx control task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn deploy_nginx_service(
+    app: AppHandle,
+    request: DeployNginxServiceRequest,
+) -> Result<DeployNginxServiceResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || deploy_nginx_service_impl(&app_handle, request))
+        .await
+        .map_err(|err| format!("failed to join nginx deploy task: {err}"))?
 }
 
 #[tauri::command]

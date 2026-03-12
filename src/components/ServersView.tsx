@@ -86,6 +86,7 @@ export function ServersView({
   onDeleteProfile
 }: ServersViewProps) {
   const [activeMenu, setActiveMenu] = useState<ActiveMenu>('servers');
+  const [deleteTargetProfile, setDeleteTargetProfile] = useState<ConnectionProfile | null>(null);
   const menuItems: Array<{ id: ActiveMenu; label: string; icon: MenuIconName; badge?: number }> = [
     { id: 'servers', label: '服务器', icon: 'servers', badge: profiles.length },
     { id: 'systemd', label: 'systemd部署', icon: 'systemd' },
@@ -94,6 +95,21 @@ export function ServersView({
     { id: 'environment_deploy', label: '环境部署', icon: 'environment_deploy' },
     { id: 'settings', label: '设置', icon: 'settings' }
   ];
+
+  const onRequestDeleteProfile = (profile: ConnectionProfile) => {
+    if (profilesBusy) {
+      return;
+    }
+    setDeleteTargetProfile(profile);
+  };
+
+  const onConfirmDeleteProfile = () => {
+    if (!deleteTargetProfile) {
+      return;
+    }
+    onDeleteProfile(deleteTargetProfile);
+    setDeleteTargetProfile(null);
+  };
 
   return (
     <div className="servers-page">
@@ -184,7 +200,7 @@ export function ServersView({
                     <button
                       type="button"
                       className="danger"
-                      onClick={() => onDeleteProfile(profile)}
+                      onClick={() => onRequestDeleteProfile(profile)}
                       disabled={profilesBusy}
                     >
                       删除
@@ -206,6 +222,26 @@ export function ServersView({
           <div className="empty-state">设置内容将在这里展示。</div>
         )}
       </section>
+
+      {deleteTargetProfile && (
+        <div className="systemd-confirm-overlay" role="dialog" aria-modal="true" aria-label="确认删除服务器">
+          <div className="systemd-confirm-modal">
+            <h3>确认删除</h3>
+            <p>
+              将删除服务器配置“{deleteTargetProfile.name}”（{deleteTargetProfile.username}@{deleteTargetProfile.host}:
+              {deleteTargetProfile.port}），该操作不可撤销。
+            </p>
+            <div className="card-actions systemd-confirm-actions">
+              <button type="button" onClick={() => setDeleteTargetProfile(null)} disabled={profilesBusy}>
+                取消
+              </button>
+              <button type="button" className="danger" onClick={onConfirmDeleteProfile} disabled={profilesBusy}>
+                {profilesBusy ? '删除中...' : '确认删除'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

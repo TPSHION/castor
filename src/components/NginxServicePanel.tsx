@@ -51,6 +51,9 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
               <button type="button" onClick={vm.onStartCreateNginx} disabled={profiles.length === 0 || vm.nginxBusy}>
                 新增 / 导入 nginx
               </button>
+              <button type="button" onClick={vm.onStartDeployNginx} disabled={profiles.length === 0 || vm.nginxBusy}>
+                部署 nginx
+              </button>
             </div>
           </div>
 
@@ -181,7 +184,7 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
                 <article className="host-card">
                   <header className="host-card-header">
                     <div>
-                      <h3>{vm.selectedNginxDetailService.name}</h3>
+                      <h3>nginx 服务信息</h3>
                       <p>{vm.profileNameMap.get(vm.selectedNginxDetailService.profile_id) ?? '未知服务器'}</p>
                     </div>
                   </header>
@@ -254,6 +257,158 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
             )}
           </div>
         </>
+      ) : vm.nginxMode === 'deploy' ? (
+        <>
+          <div className="systemd-form-header">
+            <button
+              type="button"
+              className="systemd-back-icon-btn"
+              onClick={vm.onBackNginxList}
+              disabled={vm.nginxBusy}
+              aria-label="返回列表"
+              title="返回列表"
+            >
+              <svg className="systemd-back-icon" viewBox="0 0 16 16" aria-hidden="true">
+                <path
+                  d="M10.5 3.5L6 8l4.5 4.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span className="systemd-back-label">返回</span>
+            </button>
+            <h2>部署 nginx 服务</h2>
+            <div className="section-actions">
+              <button
+                type="button"
+                onClick={() => void vm.onSubmitDeployNginx()}
+                disabled={vm.nginxBusy || Boolean(vm.nginxValidation)}
+              >
+                {vm.nginxBusy ? '部署中...' : '开始部署'}
+              </button>
+            </div>
+          </div>
+
+          <div className="systemd-form-scroll">
+            <p className="status-line">
+              部署说明：自动识别包管理器安装 nginx，并尝试执行 <code>systemctl enable/start nginx</code>。
+            </p>
+            {vm.nginxMessage && <p className={vm.nginxMessageIsError ? 'status-line error' : 'status-line'}>{vm.nginxMessage}</p>}
+
+            <div className="systemd-form-grid">
+              <label className="field-label">
+                目标服务器
+                <select
+                  value={vm.nginxForm.profileId}
+                  onChange={(event) => vm.setNginxForm((prev) => ({ ...prev, profileId: event.target.value }))}
+                  disabled={profiles.length === 0 || vm.nginxBusy}
+                >
+                  {profiles.length === 0 && <option value="">暂无服务器</option>}
+                  {profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name} ({profile.username}@{profile.host})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-label systemd-form-span">
+                nginx 命令路径
+                <input
+                  value={vm.nginxForm.nginxBin}
+                  onChange={(event) => vm.setNginxForm((prev) => ({ ...prev, nginxBin: event.target.value }))}
+                  placeholder="/usr/sbin/nginx"
+                  disabled={vm.nginxBusy}
+                  {...vm.textInputProps}
+                />
+              </label>
+
+              <label className="field-label systemd-form-span">
+                配置文件路径
+                <input
+                  value={vm.nginxForm.confPath}
+                  onChange={(event) => vm.setNginxForm((prev) => ({ ...prev, confPath: event.target.value }))}
+                  placeholder="/etc/nginx/nginx.conf"
+                  disabled={vm.nginxBusy}
+                  {...vm.textInputProps}
+                />
+              </label>
+
+              <label className="field-label systemd-form-span">
+                PID 文件路径（可选）
+                <input
+                  value={vm.nginxForm.pidPath}
+                  onChange={(event) => vm.setNginxForm((prev) => ({ ...prev, pidPath: event.target.value }))}
+                  placeholder="/run/nginx.pid"
+                  disabled={vm.nginxBusy}
+                  {...vm.textInputProps}
+                />
+              </label>
+            </div>
+
+            <div className="systemd-options">
+              <label className="systemd-option">
+                <input
+                  type="checkbox"
+                  checked={vm.nginxForm.useSudo}
+                  onChange={(event) => vm.setNginxForm((prev) => ({ ...prev, useSudo: event.target.checked }))}
+                  disabled={vm.nginxBusy}
+                />
+                使用 sudo 执行部署命令
+              </label>
+            </div>
+
+            {vm.nginxValidation && <p className="status-line error">{vm.nginxValidation}</p>}
+            <p className="status-line">当前服务器：{vm.selectedNginxProfile ? vm.profileNameMap.get(vm.selectedNginxProfile.id) : '-'}</p>
+
+            <div className="systemd-detail-grid">
+              <article className="host-card">
+                <header className="host-card-header">
+                  <div>
+                    <h3>部署任务信息</h3>
+                    <p>{vm.selectedNginxProfile ? vm.profileNameMap.get(vm.selectedNginxProfile.id) : '未选择服务器'}</p>
+                  </div>
+                </header>
+                <p className="systemd-service-meta">部署状态：{vm.nginxDeployRunning ? '部署中' : '空闲'}</p>
+                <p className="systemd-service-meta">部署 ID：{vm.nginxDeployActiveId ?? '-'}</p>
+                <p className="systemd-service-meta">
+                  nginx 命令：{vm.nginxForm.nginxBin.trim() || '/usr/sbin/nginx'}
+                </p>
+                <p className="systemd-service-meta">
+                  配置文件：{vm.nginxForm.confPath.trim() || '/etc/nginx/nginx.conf'}
+                </p>
+              </article>
+
+              <article className="host-card systemd-detail-code-card">
+                <header className="host-card-header">
+                  <div>
+                    <h3>部署日志（实时）</h3>
+                    <p>部署期间持续输出远程安装与启动信息</p>
+                  </div>
+                  <div className="card-actions">
+                    <button
+                      type="button"
+                      onClick={vm.clearNginxDeployLogs}
+                      disabled={vm.nginxDeployRunning || vm.nginxDeployLogs.length === 0}
+                    >
+                      清空日志
+                    </button>
+                  </div>
+                </header>
+                {vm.nginxDeployLogs.length > 0 ? (
+                  <pre className="systemd-log">{vm.nginxDeployLogs.join('\n')}</pre>
+                ) : (
+                  <p className="systemd-service-meta">
+                    {vm.nginxDeployRunning ? '正在等待远程日志输出...' : '尚未开始部署，点击“开始部署”查看实时日志。'}
+                  </p>
+                )}
+              </article>
+            </div>
+          </div>
+        </>
       ) : vm.nginxMode === 'config' ? (
         <>
           <div className="systemd-form-header">
@@ -309,7 +464,7 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
                 <article className="host-card">
                   <header className="host-card-header">
                     <div>
-                      <h3>{vm.selectedNginxConfigService.name}</h3>
+                      <h3>nginx 服务信息</h3>
                       <p>{vm.profileNameMap.get(vm.selectedNginxConfigService.profile_id) ?? '未知服务器'}</p>
                     </div>
                   </header>
@@ -410,18 +565,6 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
 
             <div className="systemd-form-grid">
               <label className="field-label">
-                服务名称
-                <input
-                  value={vm.nginxForm.name}
-                  onChange={(event) => vm.setNginxForm((prev) => ({ ...prev, name: event.target.value }))}
-                  placeholder="如：生产 nginx"
-                  disabled={vm.nginxBusy}
-                  {...vm.textInputProps}
-                />
-                {vm.duplicateNginxName && <span className="field-error-text">同服务器下名称已存在</span>}
-              </label>
-
-              <label className="field-label">
                 目标服务器
                 <select
                   value={vm.nginxForm.profileId}
@@ -493,7 +636,7 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
         <div className="systemd-confirm-overlay" role="dialog" aria-modal="true" aria-label="确认删除 nginx 服务">
           <div className="systemd-confirm-modal">
             <h3>确认删除</h3>
-            <p>将仅删除本地 nginx 管理配置“{vm.nginxDeleteTarget.name}”，不会影响远程 nginx 服务运行。</p>
+            <p>将仅删除本地 nginx 管理配置，不会影响远程 nginx 服务运行。</p>
             <div className="card-actions systemd-confirm-actions">
               <button type="button" onClick={() => vm.setNginxDeleteTarget(null)} disabled={vm.nginxBusy}>
                 取消
@@ -535,7 +678,15 @@ type NginxServiceCardProps = {
   onDelete: (service: NginxService) => void;
 };
 
-function NginxServiceCard({ service, profileLabel, busy, onOpenDetail, onOpenConfig, onEdit, onDelete }: NginxServiceCardProps) {
+function NginxServiceCard({
+  service,
+  profileLabel,
+  busy,
+  onOpenDetail,
+  onOpenConfig,
+  onEdit,
+  onDelete
+}: NginxServiceCardProps) {
   return (
     <article
       className={busy ? 'host-card systemd-service-card' : 'host-card systemd-service-card clickable'}
@@ -558,7 +709,7 @@ function NginxServiceCard({ service, profileLabel, busy, onOpenDetail, onOpenCon
     >
       <header className="host-card-header">
         <div>
-          <h3>{service.name}</h3>
+          <h3>nginx 服务</h3>
           <p>{profileLabel}</p>
         </div>
       </header>
