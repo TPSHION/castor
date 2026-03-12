@@ -5,39 +5,6 @@ import type { ConnectionProfile, ProxyNode, ServerProxyConfig } from '../../type
 
 type StatusTone = 'pending' | 'active' | 'failed' | 'unknown';
 
-function getConfigStatusTone(status: string): StatusTone {
-  if (status === 'active') {
-    return 'active';
-  }
-  if (status === 'failed') {
-    return 'failed';
-  }
-  if (status === 'pending') {
-    return 'pending';
-  }
-  return 'unknown';
-}
-
-function getNodeStatusLabel(node: ProxyNode, activeNodeId?: string) {
-  if (!node.supported) {
-    return '不支持';
-  }
-  if (activeNodeId === node.id) {
-    return '当前生效';
-  }
-  return '可用';
-}
-
-function getNodeStatusTone(node: ProxyNode, activeNodeId?: string): StatusTone {
-  if (!node.supported) {
-    return 'failed';
-  }
-  if (activeNodeId === node.id) {
-    return 'active';
-  }
-  return 'pending';
-}
-
 function getConnectivityStatusTone(node: ProxyNode): StatusTone {
   if (node.reachability_status === 'ok') {
     return 'active';
@@ -196,12 +163,6 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
               {selectedConfig && (
                 <>
                   <p className="status-line">订阅链接：{selectedConfig.subscription_url}</p>
-                  <p className="status-line">
-                    当前状态：
-                    <span className={`environment-proxy-status ${getConfigStatusTone(selectedConfig.status)}`}>
-                      {selectedConfig.status}
-                    </span>
-                  </p>
                   <p className="status-line">最后更新：{formatUnixTime(selectedConfig.updated_at)}</p>
                   {selectedConfig.last_error && <p className="status-line error">最近错误：{selectedConfig.last_error}</p>}
                 </>
@@ -250,15 +211,12 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
                         <th>插件</th>
                         <th>连通状态</th>
                         <th>耗时</th>
-                        <th>状态</th>
                         <th>操作</th>
                       </tr>
                     </thead>
                     <tbody>
                       {selectedNodes.map((node) => {
-                        const statusTone = getNodeStatusTone(node, selectedConfig?.active_node_id);
-                        const statusLabel = getNodeStatusLabel(node, selectedConfig?.active_node_id);
-                        const active = selectedConfig?.active_node_id === node.id;
+                        const active = selectedConfig?.status === 'active' && selectedConfig?.active_node_id === node.id;
                         return (
                           <tr key={node.id} className={active ? 'environment-proxy-row-active' : ''}>
                             <td title={node.raw_uri}>{node.name}</td>
@@ -277,9 +235,6 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
                               </span>
                             </td>
                             <td>{getLatencyLabel(node)}</td>
-                            <td>
-                              <span className={`environment-proxy-status ${statusTone}`}>{statusLabel}</span>
-                            </td>
                             <td>
                               <div className="environment-proxy-row-actions">
                                 <button

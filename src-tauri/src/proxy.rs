@@ -160,30 +160,22 @@ pub fn sync_server_proxy_subscription(
         }
         existing.subscription_url = subscription_url.to_string();
         existing.nodes = nodes;
-        existing.active_node_id =
-            select_active_node_id(existing.active_node_id.as_deref(), &existing.nodes);
-        existing.local_http_proxy = existing
-            .active_node_id
-            .as_ref()
-            .map(|_| format!("http://127.0.0.1:{DEFAULT_PROXY_MIXED_PORT}"));
-        existing.local_socks_proxy = existing
-            .active_node_id
-            .as_ref()
-            .map(|_| format!("socks5://127.0.0.1:{DEFAULT_PROXY_MIXED_PORT}"));
+        existing.active_node_id = None;
+        existing.local_http_proxy = None;
+        existing.local_socks_proxy = None;
         existing.status = "pending".to_string();
         existing.last_error = None;
         existing.updated_at = now;
         existing.clone()
     } else {
-        let active_node_id = select_active_node_id(None, &nodes);
         let config = ServerProxyConfig {
             id: Uuid::new_v4().to_string(),
             profile_id: profile_id.unwrap_or_default(),
             subscription_url: subscription_url.to_string(),
             nodes,
-            active_node_id,
-            local_http_proxy: Some(format!("http://127.0.0.1:{DEFAULT_PROXY_MIXED_PORT}")),
-            local_socks_proxy: Some(format!("socks5://127.0.0.1:{DEFAULT_PROXY_MIXED_PORT}")),
+            active_node_id: None,
+            local_http_proxy: None,
+            local_socks_proxy: None,
             status: "pending".to_string(),
             last_error: None,
             created_at: now,
@@ -370,18 +362,6 @@ pub fn test_server_proxy_connectivity(
             reachable, failed, timeout_ms
         ),
     })
-}
-
-fn select_active_node_id(previous_id: Option<&str>, nodes: &[ProxyNode]) -> Option<String> {
-    if let Some(id) = previous_id {
-        if nodes.iter().any(|item| item.id == id) {
-            return Some(id.to_string());
-        }
-    }
-    nodes
-        .iter()
-        .find(|item| item.supported)
-        .map(|item| item.id.clone())
 }
 
 fn fetch_subscription(url: &str) -> Result<String, String> {
@@ -675,7 +655,7 @@ fn test_single_node_connectivity(mut node: ProxyNode, timeout_ms: u64) -> ProxyN
     }
 
     let timeout = Duration::from_millis(timeout_ms);
-    let mut reachable_latency: Option<u64> = None;
+    let mut success_samples_us: Vec<u64> = Vec::new();
     let mut last_error: Option<String> = None;
     let address_text = format!("{host}:{}", node.port);
     let socket_addresses = match address_text.to_socket_addrs() {
@@ -695,24 +675,28 @@ fn test_single_node_connectivity(mut node: ProxyNode, timeout_ms: u64) -> ProxyN
         return node;
     }
 
-    for address in socket_addresses {
-        let started_at = Instant::now();
-        match TcpStream::connect_timeout(&address, timeout) {
-            Ok(stream) => {
-                let _ = stream.shutdown(std::net::Shutdown::Both);
-                let elapsed = started_at.elapsed().as_millis() as u64;
-                reachable_latency = Some(match reachable_latency {
-                    Some(current) => current.min(elapsed),
-                    None => elapsed,
-                });
+    const MAX_TEST_ADDRESSES: usize = 2;
+    const CONNECTIVITY_SAMPLES: usize = 3;
+
+    for address in socket_addresses.into_iter().take(MAX_TEST_ADDRESSES) {
+        match tcp_connect_latency_us(&address, timeout) {
+            Ok(sample) => {
+                success_samples_us.push(sample);
+                for _ in 1..CONNECTIVITY_SAMPLES {
+                    if let Ok(extra_sample) = tcp_connect_latency_us(&address, timeout) {
+                        success_samples_us.push(extra_sample);
+                    }
+                }
+                break;
             }
             Err(err) => {
-                last_error = Some(err.to_string());
+                last_error = Some(err);
             }
         }
     }
 
-    if let Some(latency_ms) = reachable_latency {
+    if !success_samples_us.is_empty() {
+        let latency_ms = normalize_latency_ms(&success_samples_us);
         node.latency_ms = Some(latency_ms);
         node.reachability_status = Some("ok".to_string());
         node.reachability_error = None;
@@ -723,6 +707,30 @@ fn test_single_node_connectivity(mut node: ProxyNode, timeout_ms: u64) -> ProxyN
     node.reachability_status = Some("failed".to_string());
     node.reachability_error = last_error.or_else(|| Some("连接失败".to_string()));
     node
+}
+
+fn tcp_connect_latency_us(
+    address: &std::net::SocketAddr,
+    timeout: Duration,
+) -> Result<u64, String> {
+    let started_at = Instant::now();
+    let stream = TcpStream::connect_timeout(address, timeout).map_err(|err| err.to_string())?;
+    let _ = stream.shutdown(std::net::Shutdown::Both);
+    let elapsed_us = started_at.elapsed().as_micros() as u64;
+    Ok(elapsed_us.max(1))
+}
+
+fn normalize_latency_ms(samples_us: &[u64]) -> u64 {
+    let mut values = samples_us.to_vec();
+    values.sort_unstable();
+    let median_us = if values.len() % 2 == 1 {
+        values[values.len() / 2]
+    } else {
+        let right = values.len() / 2;
+        let left = right.saturating_sub(1);
+        (values[left] + values[right]) / 2
+    };
+    ((median_us + 999) / 1_000).max(1)
 }
 
 fn extract_host_port_from_generic_uri(raw_uri: &str) -> Option<(String, u16)> {
