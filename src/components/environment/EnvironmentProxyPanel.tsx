@@ -250,7 +250,6 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
                         <th>插件</th>
                         <th>连通状态</th>
                         <th>耗时</th>
-                        <th>测试时间</th>
                         <th>状态</th>
                         <th>操作</th>
                       </tr>
@@ -278,7 +277,6 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
                               </span>
                             </td>
                             <td>{getLatencyLabel(node)}</td>
-                            <td>{node.tested_at ? formatUnixTime(node.tested_at) : '-'}</td>
                             <td>
                               <span className={`environment-proxy-status ${statusTone}`}>{statusLabel}</span>
                             </td>

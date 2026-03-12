@@ -646,10 +646,22 @@ fn parse_unsupported_node(raw_uri: &str) -> Option<ProxyNode> {
 }
 
 fn test_nodes_connectivity(nodes: Vec<ProxyNode>, timeout_ms: u64) -> Vec<ProxyNode> {
+    if nodes.is_empty() {
+        return nodes;
+    }
+
+    let mut nodes = nodes;
+    let parallelism = nodes.len().min(16).max(1);
+    for chunk in nodes.chunks_mut(parallelism) {
+        std::thread::scope(|scope| {
+            for node in chunk {
+                scope.spawn(move || {
+                    *node = test_single_node_connectivity(node.clone(), timeout_ms);
+                });
+            }
+        });
+    }
     nodes
-        .into_iter()
-        .map(|node| test_single_node_connectivity(node, timeout_ms))
-        .collect()
 }
 
 fn test_single_node_connectivity(mut node: ProxyNode, timeout_ms: u64) -> ProxyNode {
@@ -1142,13 +1154,13 @@ fn server_proxy_configs_file_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn default_connectivity_timeout_ms() -> u64 {
-    2_500
+    900
 }
 
 fn clamp_connectivity_timeout_ms(value: Option<u64>) -> u64 {
     value
         .unwrap_or(default_connectivity_timeout_ms())
-        .clamp(200, 15_000)
+        .clamp(200, 3_000)
 }
 
 fn now_unix() -> u64 {
