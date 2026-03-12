@@ -349,12 +349,12 @@ pub fn test_server_proxy_connectivity(
         .filter(|item| item.reachability_status.as_deref() == Some("ok"))
         .count();
     let failed = tested.saturating_sub(reachable);
-    if failed > 0 {
-        config.last_error = Some(format!(
-            "连通性测试完成：成功 {} / 失败 {}",
-            reachable, failed
-        ));
-    } else {
+    if config
+        .last_error
+        .as_deref()
+        .map(is_connectivity_summary_message)
+        .unwrap_or(false)
+    {
         config.last_error = None;
     }
     update_server_proxy_config(app, &config)?;
@@ -1161,6 +1161,10 @@ fn clamp_connectivity_timeout_ms(value: Option<u64>) -> u64 {
     value
         .unwrap_or(default_connectivity_timeout_ms())
         .clamp(200, 3_000)
+}
+
+fn is_connectivity_summary_message(message: &str) -> bool {
+    message.trim().starts_with("连通性测试完成：")
 }
 
 fn now_unix() -> u64 {
