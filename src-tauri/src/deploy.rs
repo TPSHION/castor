@@ -1156,53 +1156,65 @@ fn strip_ansi_escape_codes(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut output = String::with_capacity(input.len());
     let mut index = 0;
+    let mut segment_start = 0;
 
     while index < bytes.len() {
-        if bytes[index] == 0x1B {
+        if bytes[index] != 0x1B {
             index += 1;
-            if index >= bytes.len() {
-                break;
-            }
-
-            match bytes[index] {
-                b'[' => {
-                    // CSI: ESC [ ... final-byte
-                    index += 1;
-                    while index < bytes.len() {
-                        let b = bytes[index];
-                        if (0x40..=0x7E).contains(&b) {
-                            index += 1;
-                            break;
-                        }
-                        index += 1;
-                    }
-                }
-                b']' => {
-                    // OSC: ESC ] ... (BEL or ESC \)
-                    index += 1;
-                    while index < bytes.len() {
-                        let b = bytes[index];
-                        if b == 0x07 {
-                            index += 1;
-                            break;
-                        }
-                        if b == 0x1B && index + 1 < bytes.len() && bytes[index + 1] == b'\\' {
-                            index += 2;
-                            break;
-                        }
-                        index += 1;
-                    }
-                }
-                _ => {
-                    // Other 2-byte escape sequences.
-                    index += 1;
-                }
-            }
             continue;
         }
 
-        output.push(bytes[index] as char);
+        if segment_start < index {
+            let chunk = String::from_utf8_lossy(&bytes[segment_start..index]);
+            output.push_str(&chunk);
+        }
+
         index += 1;
+        if index >= bytes.len() {
+            segment_start = index;
+            break;
+        }
+
+        match bytes[index] {
+            b'[' => {
+                // CSI: ESC [ ... final-byte
+                index += 1;
+                while index < bytes.len() {
+                    let b = bytes[index];
+                    if (0x40..=0x7E).contains(&b) {
+                        index += 1;
+                        break;
+                    }
+                    index += 1;
+                }
+            }
+            b']' => {
+                // OSC: ESC ] ... (BEL or ESC \)
+                index += 1;
+                while index < bytes.len() {
+                    let b = bytes[index];
+                    if b == 0x07 {
+                        index += 1;
+                        break;
+                    }
+                    if b == 0x1B && index + 1 < bytes.len() && bytes[index + 1] == b'\\' {
+                        index += 2;
+                        break;
+                    }
+                    index += 1;
+                }
+            }
+            _ => {
+                // Other 2-byte escape sequences.
+                index += 1;
+            }
+        }
+        segment_start = index;
+    }
+
+    if segment_start < bytes.len() {
+        let chunk = String::from_utf8_lossy(&bytes[segment_start..]);
+        output.push_str(&chunk);
     }
 
     output
