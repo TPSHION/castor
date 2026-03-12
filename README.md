@@ -101,6 +101,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 - 模块速查：`docs/developer-module-quick-reference.md`
 - 编码规范：`docs/coding-standards.md`
 - 功能开发工作流：`docs/feature-delivery-workflow.md`
+- SSL证书管理原理：`docs/ssl-certificate-management-principles.md`
 - 大文件优化计划：`docs/large-file-optimization-plan.md`
 
 ## 注意事项

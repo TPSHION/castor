@@ -1,0 +1,154 @@
+.environment-ssl-page {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.environment-ssl-page-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: #6e7c99 transparent;
+}
+
+.environment-ssl-page-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.environment-ssl-page-body::-webkit-scrollbar-thumb {
+  background: #6e7c99;
+  border-radius: 999px;
+}
+
+.environment-ssl-page-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.environment-ssl-header {
+  margin-bottom: 0;
+}
+
+.environment-ssl-card {
+  gap: 10px;
+}
+
+.environment-ssl-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.environment-ssl-form-grid input,
+.environment-ssl-form-grid select {
+  height: 36px;
+}
+
+.environment-ssl-form-grid textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+}
+
+.environment-ssl-field-wide {
+  grid-column: 1 / -1;
+}
+
+.environment-ssl-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.environment-ssl-option input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+  padding: 0;
+}
+
+.environment-ssl-table-wrap {
+  border: 1px solid #405573;
+  border-radius: 9px;
+  overflow-x: auto;
+  background: #141d2f;
+}
+
+.environment-ssl-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.environment-ssl-table th,
+.environment-ssl-table td {
+  border-bottom: 1px solid #324867;
+  padding: 8px;
+  text-align: left;
+  color: #cbd8ef;
+  white-space: nowrap;
+}
+
+.environment-ssl-table th {
+  font-weight: 600;
+  color: #d8e5fb;
+  background: rgb(24 36 58 / 75%);
+}
+
+.environment-ssl-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.environment-ssl-row-active td {
+  background: rgb(44 76 129 / 24%);
+}
+
+.environment-ssl-status {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #60779f;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: #d3def2;
+  background: rgb(59 74 101 / 22%);
+}
+
+.environment-ssl-status.pending {
+  border-color: #6684b4;
+  color: #d7e6ff;
+  background: rgb(44 76 129 / 30%);
+}
+
+.environment-ssl-status.active {
+  border-color: #2ea66d;
+  color: #b9efcf;
+  background: rgb(34 114 76 / 28%);
+}
+
+.environment-ssl-status.expiring {
+  border-color: #b68545;
+  color: #ffdfb2;
+  background: rgb(117 76 24 / 30%);
+}
+
+.environment-ssl-status.failed {
+  border-color: #b15464;
+  color: #ffd0d8;
+  background: rgb(132 46 64 / 26%);
+}
+
+.environment-ssl-row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

@@ -4,6 +4,7 @@ import { SystemdDeployPanel } from './SystemdDeployPanel';
 import { NginxServicePanel } from './NginxServicePanel';
 import { EnvironmentConfigPanel } from './environment/EnvironmentConfigPanel';
 import { EnvironmentDeployPanel } from './environment/EnvironmentDeployPanel';
+import { EnvironmentSslPanel } from './environment/EnvironmentSslPanel';
 
 type ServersViewProps = {
   profiles: ConnectionProfile[];
@@ -18,8 +19,22 @@ type ServersViewProps = {
   onDeleteProfile: (profile: ConnectionProfile) => void;
 };
 
-type ActiveMenu = 'servers' | 'settings' | 'systemd' | 'nginx' | 'environment_probe' | 'environment_deploy';
-type MenuIconName = 'servers' | 'settings' | 'systemd' | 'nginx' | 'environment_probe' | 'environment_deploy';
+type ActiveMenu =
+  | 'servers'
+  | 'settings'
+  | 'systemd'
+  | 'nginx'
+  | 'environment_probe'
+  | 'environment_deploy'
+  | 'environment_ssl';
+type MenuIconName =
+  | 'servers'
+  | 'settings'
+  | 'systemd'
+  | 'nginx'
+  | 'environment_probe'
+  | 'environment_deploy'
+  | 'environment_ssl';
 
 function MenuIcon({ name }: { name: MenuIconName }) {
   if (name === 'servers') {
@@ -65,6 +80,15 @@ function MenuIcon({ name }: { name: MenuIconName }) {
       </svg>
     );
   }
+  if (name === 'environment_ssl') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M7.5 10V8a4.5 4.5 0 019 0v2" />
+        <rect x="5" y="10" width="14" height="10" rx="2" />
+        <path d="M12 14.5v2.7" />
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 4.5l1.8 1.4 2.3-.2.7 2.2 2 1.2-1 2.1 1 2.1-2 1.2-.7 2.2-2.3-.2L12 19.5l-1.8-1.4-2.3.2-.7-2.2-2-1.2 1-2.1-1-2.1 2-1.2.7-2.2 2.3.2L12 4.5z" />
@@ -87,12 +111,18 @@ export function ServersView({
 }: ServersViewProps) {
   const [activeMenu, setActiveMenu] = useState<ActiveMenu>('servers');
   const [deleteTargetProfile, setDeleteTargetProfile] = useState<ConnectionProfile | null>(null);
-  const menuItems: Array<{ id: ActiveMenu; label: string; icon: MenuIconName; badge?: number }> = [
+  const menuItems: Array<{
+    id: ActiveMenu;
+    label: string;
+    icon: MenuIconName;
+    badge?: number;
+  }> = [
     { id: 'servers', label: '服务器', icon: 'servers', badge: profiles.length },
     { id: 'systemd', label: 'systemd部署', icon: 'systemd' },
     { id: 'nginx', label: 'nginx服务管理', icon: 'nginx' },
     { id: 'environment_probe', label: '环境探测', icon: 'environment_probe' },
     { id: 'environment_deploy', label: '环境部署', icon: 'environment_deploy' },
+    { id: 'environment_ssl', label: 'SSL证书管理', icon: 'environment_ssl' },
     { id: 'settings', label: '设置', icon: 'settings' }
   ];
 
@@ -218,6 +248,8 @@ export function ServersView({
           <EnvironmentConfigPanel profiles={profiles} />
         ) : activeMenu === 'environment_deploy' ? (
           <EnvironmentDeployPanel profiles={profiles} />
+        ) : activeMenu === 'environment_ssl' ? (
+          <EnvironmentSslPanel profiles={profiles} />
         ) : (
           <div className="empty-state">设置内容将在这里展示。</div>
         )}

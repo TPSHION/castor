@@ -646,3 +646,85 @@ export type NginxParsedConfigResult = {
   summary: NginxParsedConfigSummary;
   root: NginxParsedConfigNode;
 };
+
+export type SslChallengeType = 'http' | 'dns';
+export type SslCertificateStatus = 'pending' | 'active' | 'expiring' | 'failed';
+
+export type SslDnsEnvVar = {
+  key: string;
+  value: string;
+};
+
+export type SslCertificate = {
+  id: string;
+  profile_id: string;
+  domain: string;
+  email?: string;
+  challenge_type: SslChallengeType;
+  webroot_path?: string;
+  dns_provider?: string;
+  dns_env: SslDnsEnvVar[];
+  key_file: string;
+  fullchain_file: string;
+  reload_command?: string;
+  auto_renew_enabled: boolean;
+  renew_before_days: number;
+  renew_at: string;
+  status: SslCertificateStatus;
+  issuer?: string;
+  not_before?: string;
+  not_after?: string;
+  last_error?: string;
+  last_operation_at?: number;
+  created_at: number;
+  updated_at: number;
+};
+
+export type ListSslCertificatesRequest = {
+  profile_id: string;
+};
+
+export type UpsertSslCertificateRequest = {
+  id?: string;
+  profile_id: string;
+  domain: string;
+  email?: string;
+  challenge_type: SslChallengeType;
+  webroot_path?: string;
+  dns_provider?: string;
+  dns_env?: SslDnsEnvVar[];
+  key_file: string;
+  fullchain_file: string;
+  reload_command?: string;
+  auto_renew_enabled?: boolean;
+  renew_before_days?: number;
+  renew_at?: string;
+};
+
+export type DeleteSslCertificateRequest = {
+  id: string;
+};
+
+export type ApplySslCertificateRequest = {
+  id: string;
+  force?: boolean;
+};
+
+export type RenewSslCertificateRequest = {
+  id: string;
+  force?: boolean;
+};
+
+export type SyncSslCertificateStatusRequest = {
+  id: string;
+};
+
+export type SslCertificateOperationResult = {
+  certificate: SslCertificate;
+  operation: string;
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exit_status: number;
+  message: string;
+};

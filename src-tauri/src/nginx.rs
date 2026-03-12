@@ -447,22 +447,16 @@ pub fn deploy_nginx_service(
         app,
         &deploy_id,
         &service.id,
-        format!(
-            "开始部署：{} ({})",
-            service.name,
-            profile.host
-        ),
+        format!("开始部署：{} ({})", service.name, profile.host),
     );
 
-    let (stdout, stderr, exit_status, installed_before, discovery) = with_pooled_session(
-        &profile,
-        |session| {
+    let (stdout, stderr, exit_status, installed_before, discovery) =
+        with_pooled_session(&profile, |session| {
             let command_script = build_deploy_script(&service);
-            let (stdout, exit_status) = run_remote_script_streaming_stdout(
-                session,
-                &command_script,
-                |line| push_nginx_deploy_log(app, &deploy_id, &service.id, line),
-            )?;
+            let (stdout, exit_status) =
+                run_remote_script_streaming_stdout(session, &command_script, |line| {
+                    push_nginx_deploy_log(app, &deploy_id, &service.id, line)
+                })?;
             let stderr = String::new();
             if exit_status != 0 {
                 let detail = if stderr.trim().is_empty() {
@@ -489,8 +483,7 @@ pub fn deploy_nginx_service(
             let installed_before = parse_deploy_output_installed_before(&stdout);
             let discovery = query_remote_nginx(session)?;
             Ok((stdout, stderr, exit_status, installed_before, discovery))
-        },
-    )?;
+        })?;
 
     let discovered_bin = discovery
         .nginx_bin
