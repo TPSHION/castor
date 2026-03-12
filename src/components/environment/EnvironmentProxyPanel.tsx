@@ -1,9 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatUnixTime } from '../../app/helpers';
 import { useEnvironmentProxy } from '../../app/hooks/environment/useEnvironmentProxy';
 import type { ConnectionProfile, ProxyNode, ServerProxyConfig } from '../../types';
 
 type StatusTone = 'pending' | 'active' | 'failed' | 'unknown';
+type StepState = 'pending' | 'active' | 'completed' | 'failed';
+
+const PROXY_APPLY_STEPS = [
+  '准备权限与执行环境',
+  '检查并安装 sing-box',
+  '写入代理配置与服务文件',
+  '重载并重启代理服务',
+  '校验代理服务状态'
+];
 
 function getConnectivityStatusTone(node: ProxyNode): StatusTone {
   if (node.reachability_status === 'ok') {
@@ -32,6 +41,31 @@ function getLatencyLabel(node: ProxyNode): string {
   return '-';
 }
 
+function shouldShowSubscriptionError(lastError?: string): boolean {
+  const normalized = (lastError ?? '').trim();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.startsWith('apply proxy failed')) {
+    return false;
+  }
+  if (normalized.includes('当前节点暂不支持自动部署')) {
+    return false;
+  }
+  return true;
+}
+
+function parseCurrentApplyStepIndex(logs: string[]): number {
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    const line = logs[index];
+    const match = line.match(/^\[(\d+)\/(\d+)\]/);
+    if (match) {
+      return Number.parseInt(match[1], 10) - 1;
+    }
+  }
+  return -1;
+}
+
 export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfile[] }) {
   const vm = useEnvironmentProxy(profiles);
   const [activePage, setActivePage] = useState<'nodes' | 'remote_config'>('nodes');
@@ -43,6 +77,7 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
   const [applyUseSudo, setApplyUseSudo] = useState(true);
   const [applyMixedPort, setApplyMixedPort] = useState(7890);
   const [remoteConfigNodeId, setRemoteConfigNodeId] = useState('');
+  const realtimeLogRef = useRef<HTMLPreElement | null>(null);
   const selectedConfig = vm.selectedConfig;
   const selectedNodes = useMemo(() => selectedConfig?.nodes ?? [], [selectedConfig?.nodes]);
   const supportedNodes = useMemo(() => selectedNodes.filter((item) => item.supported), [selectedNodes]);
@@ -56,6 +91,10 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
     }
     return vm.runtimeStatus.profile_id === applyProfileId ? vm.runtimeStatus : null;
   }, [applyProfileId, vm.runtimeStatus]);
+  const currentApplyStepIndex = useMemo(
+    () => parseCurrentApplyStepIndex(vm.applyRealtimeLogs),
+    [vm.applyRealtimeLogs]
+  );
   const noAssistTextInputProps = {
     autoComplete: 'off',
     autoCorrect: 'off',
@@ -101,6 +140,13 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
       setRemoteConfigNodeId(supportedNodes[0].id);
     }
   }, [remoteConfigNodeId, supportedNodes]);
+
+  useEffect(() => {
+    if (!vm.applyBusy || !realtimeLogRef.current) {
+      return;
+    }
+    realtimeLogRef.current.scrollTop = realtimeLogRef.current.scrollHeight;
+  }, [vm.applyBusy, vm.applyRealtimeLogs]);
 
   const onOpenAddDialog = () => {
     setAddSubscriptionUrl(selectedConfig?.subscription_url ?? '');
@@ -150,6 +196,37 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
       applyUseSudo,
       applyMixedPort
     );
+  };
+
+  const getStepState = (index: number): StepState => {
+    if (vm.applyBusy) {
+      if (currentApplyStepIndex < 0) {
+        return 'pending';
+      }
+      if (index < currentApplyStepIndex) {
+        return 'completed';
+      }
+      if (index === currentApplyStepIndex) {
+        return 'active';
+      }
+      return 'pending';
+    }
+
+    if (vm.lastApplyLog?.result.success) {
+      return 'completed';
+    }
+    if (vm.lastApplyLog && !vm.lastApplyLog.result.success) {
+      if (currentApplyStepIndex >= 0) {
+        if (index < currentApplyStepIndex) {
+          return 'completed';
+        }
+        if (index === currentApplyStepIndex) {
+          return 'failed';
+        }
+      }
+      return 'pending';
+    }
+    return 'pending';
   };
 
   return (
@@ -322,7 +399,9 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
                 <>
                   <p className="status-line">订阅链接：{selectedConfig.subscription_url}</p>
                   <p className="status-line">最后更新：{formatUnixTime(selectedConfig.updated_at)}</p>
-                  {selectedConfig.last_error && <p className="status-line error">最近错误：{selectedConfig.last_error}</p>}
+                  {shouldShowSubscriptionError(selectedConfig.last_error) && (
+                    <p className="status-line error">最近错误：{selectedConfig.last_error}</p>
+                  )}
                 </>
               )}
 
@@ -455,6 +534,34 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
                 <pre className="environment-proxy-log stderr">{vm.lastApplyLog.result.stderr || '(empty)'}</pre>
               </div>
             </div>
+          </section>
+        )}
+
+        {(vm.applyBusy || vm.applyRealtimeLogs.length > 0) && (
+          <section className="host-card environment-proxy-card">
+            <header className="host-card-header">
+              <div>
+                <h3>代理部署实时进度</h3>
+                <p>{vm.applyBusy ? '正在执行代理部署，请留意步骤与日志输出。' : '最近一次部署实时日志回放。'}</p>
+              </div>
+              <span className={vm.applyBusy ? 'chip' : 'chip environment-chip found'}>{vm.applyBusy ? '进行中' : '已结束'}</span>
+            </header>
+
+            <ol className="environment-deploy-steps">
+              {PROXY_APPLY_STEPS.map((title, index) => (
+                <li key={`${title}-${index}`} className={`environment-deploy-step ${getStepState(index)}`}>
+                  <p>
+                    <span className="environment-deploy-step-order">{index + 1}</span>
+                    <span className="environment-deploy-step-indicator" />
+                    {title}
+                  </p>
+                </li>
+              ))}
+            </ol>
+
+            <pre ref={realtimeLogRef} className="environment-proxy-log">
+              {vm.applyRealtimeLogs.join('\n') || '暂无实时日志'}
+            </pre>
           </section>
         )}
       </div>

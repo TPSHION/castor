@@ -1,3 +1,4 @@
+import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   applyServerProxyNode,
@@ -11,6 +12,7 @@ import { formatInvokeError } from '../../helpers';
 import type {
   ConnectionProfile,
   ProxyNode,
+  ProxyApplyLogPayload,
   ServerProxyApplyResult,
   ServerProxyConfig,
   ServerProxyRuntimeStatusResult
@@ -33,14 +35,17 @@ function clampMixedPort(value: number) {
 
 export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
   const loadRequestIdRef = useRef<string | null>(null);
+  const activeApplyIdRef = useRef<string | null>(null);
 
   const [configs, setConfigs] = useState<ServerProxyConfig[]>([]);
   const [selectedConfigId, setSelectedConfigId] = useState<string>('');
   const [listBusy, setListBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [applyBusy, setApplyBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [messageIsError, setMessageIsError] = useState(false);
   const [lastApplyLog, setLastApplyLog] = useState<ProxyApplyLog | null>(null);
+  const [applyRealtimeLogs, setApplyRealtimeLogs] = useState<string[]>([]);
   const [runtimeStatusBusy, setRuntimeStatusBusy] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<ServerProxyRuntimeStatusResult | null>(null);
 
@@ -101,6 +106,25 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
       setMessageIsError(false);
     }
   }, [configs.length, profiles.length]);
+
+  useEffect(() => {
+    let mounted = true;
+    const unsubscribePromise = listen<ProxyApplyLogPayload>('proxy-apply-log', (event) => {
+      if (!mounted) {
+        return;
+      }
+      const currentApplyId = activeApplyIdRef.current;
+      if (!currentApplyId || event.payload.apply_id !== currentApplyId) {
+        return;
+      }
+      setApplyRealtimeLogs((previous) => [...previous, event.payload.line].slice(-500));
+    });
+
+    return () => {
+      mounted = false;
+      void unsubscribePromise.then((unlisten) => unlisten());
+    };
+  }, []);
 
   const onSyncSubscription = useCallback(
     async (subscriptionUrl: string) => {
@@ -231,11 +255,18 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
         return false;
       }
 
+      const applyId = globalThis.crypto?.randomUUID
+        ? globalThis.crypto.randomUUID()
+        : `proxy-apply-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      activeApplyIdRef.current = applyId;
       setActionBusy(true);
+      setApplyBusy(true);
+      setApplyRealtimeLogs([]);
       try {
         const result = await applyServerProxyNode({
           id: config.id,
           node_id: node.id,
+          apply_id: applyId,
           profile_id: targetProfileId,
           use_sudo: useSudo,
           local_mixed_port: clampMixedPort(localMixedPort)
@@ -250,6 +281,15 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
         });
         setMessage(result.message);
         setMessageIsError(!result.success);
+        setApplyRealtimeLogs((previous) => {
+          if (previous.length > 0) {
+            return previous;
+          }
+          return result.stdout
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0);
+        });
         if (result.success) {
           void onCheckRuntimeStatus(targetProfileId, useSudo);
         }
@@ -259,6 +299,10 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
         setMessageIsError(true);
         return false;
       } finally {
+        if (activeApplyIdRef.current === applyId) {
+          activeApplyIdRef.current = null;
+        }
+        setApplyBusy(false);
         setActionBusy(false);
       }
     },
@@ -273,11 +317,13 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
     setSelectedConfigId,
     listBusy,
     actionBusy,
+    applyBusy,
     message,
     messageIsError,
     lastApplyLog,
     runtimeStatusBusy,
     runtimeStatus,
+    applyRealtimeLogs,
     onLoadConfigs,
     onSyncSubscription,
     onDeleteConfig,

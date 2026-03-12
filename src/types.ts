@@ -782,6 +782,7 @@ export type DeleteServerProxyConfigRequest = {
 export type ApplyServerProxyNodeRequest = {
   id: string;
   node_id: string;
+  apply_id?: string;
   profile_id?: string;
   use_sudo?: boolean;
   local_mixed_port?: number;
@@ -826,4 +827,11 @@ export type ServerProxyRuntimeStatusResult = {
   message: string;
   stdout: string;
   stderr: string;
+};
+
+export type ProxyApplyLogPayload = {
+  apply_id: string;
+  level: 'info' | 'warn' | 'error' | 'stdout' | 'done' | string;
+  line: string;
+  timestamp: number;
 };

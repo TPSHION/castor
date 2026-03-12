@@ -13,13 +13,14 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use ssh2::Session;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 use crate::profiles::{list_connection_profiles, ConnectionProfile};
 use crate::ssh::AuthConfig;
 
 const DEFAULT_PROXY_MIXED_PORT: u16 = 7890;
+const PROXY_APPLY_LOG_EVENT: &str = "proxy-apply-log";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProxyNode {
@@ -75,6 +76,7 @@ pub struct DeleteServerProxyConfigRequest {
 pub struct ApplyServerProxyNodeRequest {
     pub id: String,
     pub node_id: String,
+    pub apply_id: Option<String>,
     pub profile_id: Option<String>,
     pub use_sudo: Option<bool>,
     pub local_mixed_port: Option<u16>,
@@ -100,6 +102,14 @@ pub struct ServerProxyApplyResult {
     pub stderr: String,
     pub exit_status: i32,
     pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ProxyApplyLogPayload {
+    pub apply_id: String,
+    pub level: String,
+    pub line: String,
+    pub timestamp: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -239,6 +249,13 @@ pub fn apply_server_proxy_node(
     if id.is_empty() || node_id.is_empty() {
         return Err("id and node_id are required".to_string());
     }
+    let apply_id = request
+        .apply_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
 
     let mut config = find_server_proxy_config_by_id(app, id)?;
     let requested_profile_id = request
@@ -266,8 +283,14 @@ pub fn apply_server_proxy_node(
         .ok_or_else(|| format!("proxy node {} not found", node_id))?;
 
     if !node.supported {
+        push_proxy_apply_log(
+            app,
+            &apply_id,
+            "error",
+            "当前节点暂不支持自动部署，操作已终止。",
+        );
         config.status = "failed".to_string();
-        config.last_error = node.unsupported_reason.clone();
+        // 部署/应用阶段的错误不写入订阅配置的 last_error，避免污染订阅错误展示。
         config.updated_at = now_unix();
         update_server_proxy_config(app, &config)?;
         return Ok(ServerProxyApplyResult {
@@ -290,23 +313,36 @@ pub fn apply_server_proxy_node(
         .unwrap_or(DEFAULT_PROXY_MIXED_PORT)
         .clamp(1024, 65535);
     let script = build_apply_proxy_script(&node, use_sudo, local_mixed_port)?;
-    let (stdout, stderr, exit_status) = run_remote_script(&mut session, &script)?;
+    push_proxy_apply_log(
+        app,
+        &apply_id,
+        "info",
+        format!(
+            "开始应用代理节点：{} ({}:{})",
+            node.name, node.server, node.port
+        ),
+    );
+    let (stdout, exit_status) =
+        run_remote_script_streaming_stdout(&mut session, &script, |line| {
+            let normalized = line.trim();
+            if normalized.is_empty() {
+                return;
+            }
+            let level = if normalized.contains("failed")
+                || normalized.contains("error")
+                || normalized.contains("ERROR")
+            {
+                "error"
+            } else {
+                "stdout"
+            };
+            push_proxy_apply_log(app, &apply_id, level, normalized.to_string());
+        })?;
+    let stderr = String::new();
 
     if exit_status != 0 {
-        let detail = if stderr.trim().is_empty() {
-            stdout.trim()
-        } else {
-            stderr.trim()
-        };
         config.status = "failed".to_string();
-        config.last_error = Some(format!(
-            "apply proxy failed (exit code {exit_status}): {}",
-            if detail.is_empty() {
-                "unknown error"
-            } else {
-                detail
-            }
-        ));
+        // 部署失败仅通过实时日志和本次执行结果返回，不写入订阅 last_error。
         config.updated_at = now_unix();
         update_server_proxy_config(app, &config)?;
 
@@ -327,6 +363,7 @@ pub fn apply_server_proxy_node(
     config.last_error = None;
     config.updated_at = now_unix();
     update_server_proxy_config(app, &config)?;
+    push_proxy_apply_log(app, &apply_id, "done", "代理节点应用成功。");
 
     Ok(ServerProxyApplyResult {
         config,
@@ -990,6 +1027,7 @@ WantedBy=multi-user.target
 
     let mut script = String::new();
     script.push_str("set -e\n");
+    script.push_str("echo \"[1/5] 准备权限与执行环境\"\n");
     script.push_str(&format!(
         "CASTOR_USE_SUDO={}\n",
         if use_sudo { "1" } else { "0" }
@@ -1005,6 +1043,7 @@ WantedBy=multi-user.target
     script.push_str("fi\n");
     script
         .push_str("run_as_root(){ if [ -n \"$SUDO\" ]; then \"$SUDO\" \"$@\"; else \"$@\"; fi }\n");
+    script.push_str("echo \"[2/5] 检查并安装 sing-box\"\n");
     script.push_str("if ! command -v sing-box >/dev/null 2>&1; then\n");
     script.push_str("  ARCH_RAW=\"$(uname -m)\"\n");
     script.push_str("  case \"$ARCH_RAW\" in\n");
@@ -1035,6 +1074,7 @@ WantedBy=multi-user.target
     script.push_str("  run_as_root install -m 0755 \"$BIN_PATH\" /usr/local/bin/sing-box\n");
     script.push_str("  rm -rf \"$TMP_DIR\"\n");
     script.push_str("fi\n");
+    script.push_str("echo \"[3/5] 写入代理配置与服务文件\"\n");
     script.push_str("run_as_root mkdir -p /etc/castor/proxy\n");
     script.push_str("TMP_CONFIG=\"$(mktemp)\"\n");
     script.push_str("cat > \"$TMP_CONFIG\" <<'CASTOR_PROXY_CONFIG_EOF'\n");
@@ -1051,9 +1091,11 @@ WantedBy=multi-user.target
         "run_as_root install -m 0644 \"$TMP_UNIT\" /etc/systemd/system/castor-proxy.service\n",
     );
     script.push_str("rm -f \"$TMP_UNIT\"\n");
+    script.push_str("echo \"[4/5] 重载并重启代理服务\"\n");
     script.push_str("run_as_root systemctl daemon-reload\n");
     script.push_str("run_as_root systemctl enable castor-proxy.service >/dev/null 2>&1 || true\n");
     script.push_str("run_as_root systemctl restart castor-proxy.service\n");
+    script.push_str("echo \"[5/5] 校验代理服务状态\"\n");
     script.push_str("run_as_root systemctl is-active castor-proxy.service\n");
     script.push_str(&format!(
         "echo \"__CASTOR_PROXY_HTTP=http://127.0.0.1:{}\"\n",
@@ -1229,6 +1271,82 @@ fn run_remote_script(session: &mut Session, script: &str) -> Result<(String, Str
         .map_err(|err| format!("failed to read remote exit status: {err}"))?;
 
     Ok((stdout, stderr, exit_status))
+}
+
+fn run_remote_script_streaming_stdout<F>(
+    session: &mut Session,
+    script: &str,
+    mut on_line: F,
+) -> Result<(String, i32), String>
+where
+    F: FnMut(String),
+{
+    let mut channel = session
+        .channel_session()
+        .map_err(|err| format!("failed to open channel: {err}"))?;
+    channel
+        .exec("bash -s 2>&1")
+        .map_err(|err| format!("failed to execute remote shell: {err}"))?;
+
+    channel
+        .write_all(script.as_bytes())
+        .map_err(|err| format!("failed to write remote script: {err}"))?;
+    channel
+        .send_eof()
+        .map_err(|err| format!("failed to send script eof: {err}"))?;
+
+    let mut output = String::new();
+    let mut pending = String::new();
+    let mut buffer = [0u8; 4096];
+
+    loop {
+        let read_size = channel
+            .read(&mut buffer)
+            .map_err(|err| format!("failed reading remote stdout: {err}"))?;
+        if read_size == 0 {
+            break;
+        }
+        let chunk = String::from_utf8_lossy(&buffer[..read_size]).to_string();
+        output.push_str(&chunk);
+        pending.push_str(&chunk);
+
+        while let Some(newline_index) = pending.find('\n') {
+            let line = pending[..newline_index].trim_end_matches('\r').to_string();
+            on_line(line);
+            pending.drain(..=newline_index);
+        }
+    }
+
+    let tail = pending.trim_end_matches('\r').trim().to_string();
+    if !tail.is_empty() {
+        on_line(tail);
+    }
+
+    channel
+        .wait_close()
+        .map_err(|err| format!("failed waiting remote command close: {err}"))?;
+    let exit_status = channel
+        .exit_status()
+        .map_err(|err| format!("failed to read remote exit status: {err}"))?;
+
+    Ok((output, exit_status))
+}
+
+fn push_proxy_apply_log(app: &AppHandle, apply_id: &str, level: &str, line: impl Into<String>) {
+    let line = line.into();
+    let normalized = line.trim();
+    if normalized.is_empty() {
+        return;
+    }
+    let _ = app.emit(
+        PROXY_APPLY_LOG_EVENT,
+        ProxyApplyLogPayload {
+            apply_id: apply_id.to_string(),
+            level: level.to_string(),
+            line: normalized.to_string(),
+            timestamp: now_unix(),
+        },
+    );
 }
 
 fn ensure_profile_exists(app: &AppHandle, profile_id: &str) -> Result<(), String> {
