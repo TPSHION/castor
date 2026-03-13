@@ -212,7 +212,13 @@ pub struct MihomoRuntimeStatusResult {
     pub active: bool,
     pub enabled: bool,
     pub config_exists: bool,
+    pub apply_mode: Option<String>,
     pub mode: Option<String>,
+    pub proxy_name: Option<String>,
+    pub proxy_type: Option<String>,
+    pub proxy_server: Option<String>,
+    pub proxy_port: Option<u16>,
+    pub proxy_cipher: Option<String>,
     pub checked_at: u64,
     pub message: String,
     pub stdout: String,
@@ -957,7 +963,13 @@ pub fn get_mihomo_runtime_status(
     let active = parsed.active.unwrap_or(false);
     let enabled = parsed.enabled.unwrap_or(false);
     let config_exists = parsed.config_exists.unwrap_or(false);
+    let apply_mode = parsed.apply_mode;
     let mode = parsed.mode;
+    let proxy_name = parsed.proxy_name;
+    let proxy_type = parsed.proxy_type;
+    let proxy_server = parsed.proxy_server;
+    let proxy_port = parsed.proxy_port;
+    let proxy_cipher = parsed.proxy_cipher;
     let message = if exit_status != 0 {
         "Mihomo 运行状态查询失败，请检查日志。".to_string()
     } else if active && config_exists {
@@ -978,7 +990,13 @@ pub fn get_mihomo_runtime_status(
         active,
         enabled,
         config_exists,
+        apply_mode,
         mode,
+        proxy_name,
+        proxy_type,
+        proxy_server,
+        proxy_port,
+        proxy_cipher,
         checked_at: now_unix(),
         message,
         stdout,
@@ -2463,6 +2481,11 @@ fn build_mihomo_config_yaml(
     local_mixed_port: u16,
     apply_mode: ProxyApplyMode,
 ) -> String {
+    let proxy_name = if node.name.trim().is_empty() {
+        "castor-proxy"
+    } else {
+        node.name.trim()
+    };
     let mut lines: Vec<String> = vec![
         format!("mixed-port: {}", local_mixed_port),
         "allow-lan: false".to_string(),
@@ -2470,7 +2493,7 @@ fn build_mihomo_config_yaml(
         "log-level: warning".to_string(),
         "ipv6: true".to_string(),
         "proxies:".to_string(),
-        "  - name: \"castor-proxy\"".to_string(),
+        format!("  - name: {}", yaml_quote(proxy_name)),
         "    type: ss".to_string(),
         format!("    server: {}", yaml_quote(&node.server)),
         format!("    port: {}", node.port),
@@ -2480,7 +2503,7 @@ fn build_mihomo_config_yaml(
         "  - name: \"PROXY\"".to_string(),
         "    type: select".to_string(),
         "    proxies:".to_string(),
-        "      - \"castor-proxy\"".to_string(),
+        format!("      - {}", yaml_quote(proxy_name)),
         "rules:".to_string(),
     ];
 
@@ -2848,10 +2871,37 @@ fn build_mihomo_runtime_status_script(use_sudo: bool) -> String {
     script.push_str("if [ -f \"$CONFIG_PATH\" ]; then CONFIG_EXISTS=1; fi\n");
     script.push_str("ACTIVE=0\n");
     script.push_str("ENABLED=0\n");
+    script.push_str("APPLY_MODE=\"\"\n");
     script.push_str("MODE=\"\"\n");
+    script.push_str("PROXY_NAME=\"\"\n");
+    script.push_str("PROXY_TYPE=\"\"\n");
+    script.push_str("PROXY_SERVER=\"\"\n");
+    script.push_str("PROXY_PORT=\"\"\n");
+    script.push_str("PROXY_CIPHER=\"\"\n");
     script.push_str("if [ \"$CONFIG_EXISTS\" = \"1\" ]; then\n");
     script.push_str(
         "  MODE=\"$(run_as_root sed -n 's/^[[:space:]]*mode:[[:space:]]*//p' \"$CONFIG_PATH\" | head -n 1 | tr -d '\\r')\"\n",
+    );
+    script.push_str(
+        "  if run_as_root grep -Eq '^[[:space:]]*device:[[:space:]]*castor-tun([[:space:]]*|$)' \"$CONFIG_PATH\"; then APPLY_MODE=\"tun_global\"; else APPLY_MODE=\"application\"; fi\n",
+    );
+    script.push_str(
+        "  PROXY_BLOCK=\"$(run_as_root sed -n '/^[[:space:]]*proxies:[[:space:]]*$/,/^[[:space:]]*proxy-groups:[[:space:]]*$/p' \"$CONFIG_PATH\" 2>/dev/null || true)\"\n",
+    );
+    script.push_str(
+        "  PROXY_NAME=\"$(printf '%s\\n' \"$PROXY_BLOCK\" | sed -n 's/^[[:space:]]*-[[:space:]]*name:[[:space:]]*//p' | head -n 1 | tr -d '\\r' | sed 's/^\"//;s/\"$//')\"\n",
+    );
+    script.push_str(
+        "  PROXY_TYPE=\"$(printf '%s\\n' \"$PROXY_BLOCK\" | sed -n 's/^[[:space:]]*type:[[:space:]]*//p' | head -n 1 | tr -d '\\r' | sed 's/^\"//;s/\"$//')\"\n",
+    );
+    script.push_str(
+        "  PROXY_SERVER=\"$(printf '%s\\n' \"$PROXY_BLOCK\" | sed -n 's/^[[:space:]]*server:[[:space:]]*//p' | head -n 1 | tr -d '\\r' | sed 's/^\"//;s/\"$//')\"\n",
+    );
+    script.push_str(
+        "  PROXY_PORT=\"$(printf '%s\\n' \"$PROXY_BLOCK\" | sed -n 's/^[[:space:]]*port:[[:space:]]*//p' | head -n 1 | tr -d '\\r' | sed 's/^\"//;s/\"$//')\"\n",
+    );
+    script.push_str(
+        "  PROXY_CIPHER=\"$(printf '%s\\n' \"$PROXY_BLOCK\" | sed -n 's/^[[:space:]]*cipher:[[:space:]]*//p' | head -n 1 | tr -d '\\r' | sed 's/^\"//;s/\"$//')\"\n",
     );
     script.push_str("fi\n");
     script.push_str("if command -v systemctl >/dev/null 2>&1; then\n");
@@ -2864,7 +2914,13 @@ fn build_mihomo_runtime_status_script(use_sudo: bool) -> String {
     script.push_str("echo \"__CASTOR_MIHOMO_STATUS__CONFIG_EXISTS=$CONFIG_EXISTS\"\n");
     script.push_str("echo \"__CASTOR_MIHOMO_STATUS__ACTIVE=$ACTIVE\"\n");
     script.push_str("echo \"__CASTOR_MIHOMO_STATUS__ENABLED=$ENABLED\"\n");
+    script.push_str("if [ -n \"$APPLY_MODE\" ]; then echo \"__CASTOR_MIHOMO_STATUS__APPLY_MODE=$APPLY_MODE\"; fi\n");
     script.push_str("if [ -n \"$MODE\" ]; then echo \"__CASTOR_MIHOMO_STATUS__MODE=$MODE\"; fi\n");
+    script.push_str("if [ -n \"$PROXY_NAME\" ]; then echo \"__CASTOR_MIHOMO_STATUS__PROXY_NAME=$PROXY_NAME\"; fi\n");
+    script.push_str("if [ -n \"$PROXY_TYPE\" ]; then echo \"__CASTOR_MIHOMO_STATUS__PROXY_TYPE=$PROXY_TYPE\"; fi\n");
+    script.push_str("if [ -n \"$PROXY_SERVER\" ]; then echo \"__CASTOR_MIHOMO_STATUS__PROXY_SERVER=$PROXY_SERVER\"; fi\n");
+    script.push_str("if [ -n \"$PROXY_PORT\" ]; then echo \"__CASTOR_MIHOMO_STATUS__PROXY_PORT=$PROXY_PORT\"; fi\n");
+    script.push_str("if [ -n \"$PROXY_CIPHER\" ]; then echo \"__CASTOR_MIHOMO_STATUS__PROXY_CIPHER=$PROXY_CIPHER\"; fi\n");
     script
 }
 
@@ -2926,7 +2982,13 @@ struct MihomoRuntimeStatusMarkers {
     active: Option<bool>,
     enabled: Option<bool>,
     config_exists: Option<bool>,
+    apply_mode: Option<String>,
     mode: Option<String>,
+    proxy_name: Option<String>,
+    proxy_type: Option<String>,
+    proxy_server: Option<String>,
+    proxy_port: Option<u16>,
+    proxy_cipher: Option<String>,
 }
 
 #[derive(Default)]
@@ -2985,10 +3047,52 @@ fn parse_mihomo_runtime_status_markers(stdout: &str) -> MihomoRuntimeStatusMarke
             markers.enabled = parse_marker_bool(value);
             continue;
         }
+        if let Some(value) = line.strip_prefix("__CASTOR_MIHOMO_STATUS__APPLY_MODE=") {
+            let parsed = value.trim();
+            if !parsed.is_empty() {
+                markers.apply_mode = Some(parsed.to_string());
+            }
+            continue;
+        }
         if let Some(value) = line.strip_prefix("__CASTOR_MIHOMO_STATUS__MODE=") {
             let mode = value.trim();
             if !mode.is_empty() {
                 markers.mode = Some(mode.to_string());
+            }
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_MIHOMO_STATUS__PROXY_NAME=") {
+            let parsed = value.trim();
+            if !parsed.is_empty() {
+                markers.proxy_name = Some(parsed.to_string());
+            }
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_MIHOMO_STATUS__PROXY_TYPE=") {
+            let parsed = value.trim();
+            if !parsed.is_empty() {
+                markers.proxy_type = Some(parsed.to_string());
+            }
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_MIHOMO_STATUS__PROXY_SERVER=") {
+            let parsed = value.trim();
+            if !parsed.is_empty() {
+                markers.proxy_server = Some(parsed.to_string());
+            }
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_MIHOMO_STATUS__PROXY_PORT=") {
+            let parsed = value.trim();
+            if let Ok(port) = parsed.parse::<u16>() {
+                markers.proxy_port = Some(port);
+            }
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_MIHOMO_STATUS__PROXY_CIPHER=") {
+            let parsed = value.trim();
+            if !parsed.is_empty() {
+                markers.proxy_cipher = Some(parsed.to_string());
             }
             continue;
         }

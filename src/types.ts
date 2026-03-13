@@ -865,7 +865,13 @@ export type MihomoRuntimeStatusResult = {
   active: boolean;
   enabled: boolean;
   config_exists: boolean;
+  apply_mode?: ProxyApplyMode;
   mode?: string;
+  proxy_name?: string;
+  proxy_type?: string;
+  proxy_server?: string;
+  proxy_port?: number;
+  proxy_cipher?: string;
   checked_at: number;
   message: string;
   stdout: string;

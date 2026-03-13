@@ -53,6 +53,32 @@ function parseCurrentApplyStepIndex(logs: string[]): number {
   return -1;
 }
 
+function formatApplyModeLabel(value?: string): string {
+  if (value === 'tun_global') {
+    return 'tun 全局版';
+  }
+  if (value === 'application') {
+    return '应用层代理版';
+  }
+  return '-';
+}
+
+function normalizeProtocol(value?: string): string {
+  const normalized = (value ?? '').trim().toLowerCase();
+  if (normalized === 'ss') {
+    return 'shadowsocks';
+  }
+  return normalized;
+}
+
+function normalizeHost(value?: string): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
+function normalizeCipher(value?: string): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
 export function EnvironmentMihomoPanel({ profiles }: { profiles: ConnectionProfile[] }) {
   const vm = useEnvironmentMihomo(profiles);
   const [activePage, setActivePage] = useState<'nodes' | 'deploy'>('nodes');
@@ -73,6 +99,43 @@ export function EnvironmentMihomoPanel({ profiles }: { profiles: ConnectionProfi
     () => supportedNodes.find((item) => item.id === deployNodeId) ?? supportedNodes[0] ?? null,
     [deployNodeId, supportedNodes]
   );
+  const runtimeMatchedNode = useMemo(() => {
+    const runtime = vm.runtimeStatus;
+    if (!runtime?.proxy_server || typeof runtime.proxy_port !== 'number') {
+      return null;
+    }
+    const runtimeType = normalizeProtocol(runtime.proxy_type);
+    const runtimeHost = normalizeHost(runtime.proxy_server);
+    const runtimeCipher = normalizeCipher(runtime.proxy_cipher);
+
+    for (const config of vm.configs) {
+      for (const node of config.nodes) {
+        if (!node.supported) {
+          continue;
+        }
+        if (normalizeHost(node.server) !== runtimeHost) {
+          continue;
+        }
+        if (node.port !== runtime.proxy_port) {
+          continue;
+        }
+        if (runtimeType && normalizeProtocol(node.protocol) !== runtimeType) {
+          continue;
+        }
+        if (runtimeCipher && normalizeCipher(node.method) !== runtimeCipher) {
+          continue;
+        }
+        return { config, node };
+      }
+    }
+    return null;
+  }, [
+    vm.configs,
+    vm.runtimeStatus?.proxy_server,
+    vm.runtimeStatus?.proxy_port,
+    vm.runtimeStatus?.proxy_type,
+    vm.runtimeStatus?.proxy_cipher
+  ]);
   const applicationHttpProxy = `http://127.0.0.1:${applyMixedPort}`;
   const applicationSocksProxy = `socks5://127.0.0.1:${applyMixedPort}`;
 
@@ -368,7 +431,32 @@ export function EnvironmentMihomoPanel({ profiles }: { profiles: ConnectionProfi
                   <p className="status-line">配置文件存在：{vm.runtimeStatus.config_exists ? '是' : '否'}</p>
                   <p className="status-line">服务运行中：{vm.runtimeStatus.active ? '是' : '否'}</p>
                   <p className="status-line">开机自启：{vm.runtimeStatus.enabled ? '是' : '否'}</p>
+                  <p className="status-line">部署模式：{formatApplyModeLabel(vm.runtimeStatus.apply_mode)}</p>
                   <p className="status-line">运行模式：{vm.runtimeStatus.mode || '-'}</p>
+                  <p className="status-line">节点名称：{vm.runtimeStatus.proxy_name || '-'}</p>
+                  <p className="status-line">
+                    当前代理：{vm.runtimeStatus.proxy_name || '-'} ({vm.runtimeStatus.proxy_type || '-'})
+                  </p>
+                  <p className="status-line">
+                    代理地址：
+                    {vm.runtimeStatus.proxy_server && typeof vm.runtimeStatus.proxy_port === 'number'
+                      ? `${vm.runtimeStatus.proxy_server}:${vm.runtimeStatus.proxy_port}`
+                      : '-'}
+                  </p>
+                  <p className="status-line">加密方式：{vm.runtimeStatus.proxy_cipher || '-'}</p>
+                  {runtimeMatchedNode ? (
+                    <>
+                      <p className="status-line">
+                        订阅匹配：{runtimeMatchedNode.node.name} ({runtimeMatchedNode.node.server}:
+                        {runtimeMatchedNode.node.port})
+                      </p>
+                      <p className="status-line">来源订阅：{runtimeMatchedNode.config.subscription_url}</p>
+                    </>
+                  ) : vm.runtimeStatus.proxy_server && typeof vm.runtimeStatus.proxy_port === 'number' ? (
+                    <p className="status-line error">
+                      订阅匹配：未在本地订阅中找到对应节点，请先更新订阅再重试。
+                    </p>
+                  ) : null}
                   <p className="status-line">查询时间：{formatUnixTime(vm.runtimeStatus.checked_at)}</p>
                 </div>
               )}
