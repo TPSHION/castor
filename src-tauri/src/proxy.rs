@@ -191,6 +191,7 @@ pub struct ServerProxyRuntimeOutboundSummary {
     pub r#type: String,
     pub server: Option<String>,
     pub server_port: Option<u16>,
+    pub method: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1757,6 +1758,10 @@ fn build_runtime_config_summary(
                         .get("server_port")
                         .and_then(|value| value.as_u64())
                         .and_then(|value| u16::try_from(value).ok()),
+                    method: item
+                        .get("method")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
                 })
                 .collect::<Vec<_>>()
         })

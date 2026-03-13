@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatUnixTime } from '../../app/helpers';
 import { useEnvironmentProxy } from '../../app/hooks/environment/useEnvironmentProxy';
-import type { ConnectionProfile, ProxyNode, ServerProxyConfig } from '../../types';
+import type {
+  ConnectionProfile,
+  ProxyNode,
+  ServerProxyConfig,
+  ServerProxyRuntimeConfigSummary,
+  ServerProxyRuntimeOutboundSummary
+} from '../../types';
 
 type StatusTone = 'pending' | 'active' | 'failed' | 'unknown';
 type StepState = 'pending' | 'active' | 'completed' | 'failed';
@@ -66,6 +72,62 @@ function parseCurrentApplyStepIndex(logs: string[]): number {
   return -1;
 }
 
+function normalizeHost(value?: string): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
+function normalizeMethod(value?: string): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
+function normalizeProtocol(value?: string): string {
+  const normalized = (value ?? '').trim().toLowerCase();
+  if (normalized === 'ss') {
+    return 'shadowsocks';
+  }
+  return normalized;
+}
+
+function findRuntimeProxyOutbound(
+  summary?: ServerProxyRuntimeConfigSummary
+): ServerProxyRuntimeOutboundSummary | null {
+  if (!summary || summary.outbounds.length === 0) {
+    return null;
+  }
+  const candidates = summary.outbounds.filter(
+    (item) => !!item.server && typeof item.server_port === 'number'
+  );
+  if (candidates.length === 0) {
+    return null;
+  }
+  const finalTag = (summary.route_final ?? '').trim();
+  if (finalTag) {
+    const byFinalTag = candidates.find((item) => (item.tag ?? '').trim() === finalTag);
+    if (byFinalTag) {
+      return byFinalTag;
+    }
+  }
+  return candidates.find((item) => item.tag === 'proxy') ?? candidates[0];
+}
+
+function nodeMatchesRuntimeOutbound(node: ProxyNode, outbound: ServerProxyRuntimeOutboundSummary): boolean {
+  const outboundType = normalizeProtocol(outbound.type);
+  if (outboundType && normalizeProtocol(node.protocol) !== outboundType) {
+    return false;
+  }
+  if (normalizeHost(node.server) !== normalizeHost(outbound.server)) {
+    return false;
+  }
+  if (node.port !== outbound.server_port) {
+    return false;
+  }
+  const remoteMethod = normalizeMethod(outbound.method);
+  if (!remoteMethod) {
+    return true;
+  }
+  return normalizeMethod(node.method) === remoteMethod;
+}
+
 export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfile[] }) {
   const vm = useEnvironmentProxy(profiles);
   const [activePage, setActivePage] = useState<'nodes' | 'remote_config'>('nodes');
@@ -81,10 +143,6 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
   const selectedConfig = vm.selectedConfig;
   const selectedNodes = useMemo(() => selectedConfig?.nodes ?? [], [selectedConfig?.nodes]);
   const supportedNodes = useMemo(() => selectedNodes.filter((item) => item.supported), [selectedNodes]);
-  const selectedRemoteConfigNode = useMemo(
-    () => supportedNodes.find((item) => item.id === remoteConfigNodeId) ?? supportedNodes[0] ?? null,
-    [remoteConfigNodeId, supportedNodes]
-  );
   const currentRuntimeStatus = useMemo(() => {
     if (!vm.runtimeStatus || !applyProfileId) {
       return null;
@@ -97,6 +155,47 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
     }
     return vm.runtimeConfig.profile_id === applyProfileId ? vm.runtimeConfig : null;
   }, [applyProfileId, vm.runtimeConfig]);
+  const runtimeMatchedNode = useMemo(() => {
+    const outbound = findRuntimeProxyOutbound(currentRuntimeConfig?.summary);
+    if (!outbound) {
+      return null;
+    }
+    for (const config of vm.configs) {
+      for (const node of config.nodes) {
+        if (!node.supported) {
+          continue;
+        }
+        if (nodeMatchesRuntimeOutbound(node, outbound)) {
+          return { config, node };
+        }
+      }
+    }
+    return null;
+  }, [currentRuntimeConfig?.summary, vm.configs]);
+  const remoteConfigSource = useMemo(() => {
+    if (runtimeMatchedNode) {
+      return runtimeMatchedNode.config;
+    }
+    if (applyProfileId) {
+      const scopedConfigs = vm.configs.filter((item) => item.profile_id === applyProfileId);
+      if (scopedConfigs.length > 0) {
+        return scopedConfigs.find((item) => item.status === 'active' && !!item.active_node_id) ?? scopedConfigs[0];
+      }
+    }
+    return selectedConfig ?? null;
+  }, [applyProfileId, runtimeMatchedNode, selectedConfig, vm.configs]);
+  const remoteConfigNodes = useMemo(() => remoteConfigSource?.nodes ?? [], [remoteConfigSource]);
+  const remoteSupportedNodes = useMemo(
+    () => remoteConfigNodes.filter((item) => item.supported),
+    [remoteConfigNodes]
+  );
+  const selectedRemoteConfigNode = useMemo(
+    () =>
+      remoteSupportedNodes.find((item) => item.id === remoteConfigNodeId) ??
+      remoteSupportedNodes[0] ??
+      null,
+    [remoteConfigNodeId, remoteSupportedNodes]
+  );
   const currentApplyStepIndex = useMemo(
     () => parseCurrentApplyStepIndex(vm.applyRealtimeLogs),
     [vm.applyRealtimeLogs]
@@ -129,23 +228,47 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
   }, [applyTarget, profiles]);
 
   const onCheckRuntimeStatus = vm.onCheckRuntimeStatus;
+  const onLoadRuntimeConfig = vm.onLoadRuntimeConfig;
 
   useEffect(() => {
     if (activePage !== 'remote_config' || !applyProfileId) {
       return;
     }
     void onCheckRuntimeStatus(applyProfileId, applyUseSudo);
-  }, [activePage, applyProfileId, applyUseSudo, onCheckRuntimeStatus]);
+    void onLoadRuntimeConfig(applyProfileId, applyUseSudo);
+  }, [activePage, applyProfileId, applyUseSudo, onCheckRuntimeStatus, onLoadRuntimeConfig]);
 
   useEffect(() => {
-    if (supportedNodes.length === 0) {
+    if (remoteSupportedNodes.length === 0) {
       setRemoteConfigNodeId('');
       return;
     }
-    if (!remoteConfigNodeId || !supportedNodes.some((item) => item.id === remoteConfigNodeId)) {
-      setRemoteConfigNodeId(supportedNodes[0].id);
+    if (
+      !remoteConfigNodeId ||
+      !remoteSupportedNodes.some((item) => item.id === remoteConfigNodeId)
+    ) {
+      setRemoteConfigNodeId(remoteSupportedNodes[0].id);
     }
-  }, [remoteConfigNodeId, supportedNodes]);
+  }, [remoteConfigNodeId, remoteSupportedNodes]);
+
+  useEffect(() => {
+    if (!runtimeMatchedNode) {
+      return;
+    }
+    if (remoteConfigSource?.id !== runtimeMatchedNode.config.id) {
+      return;
+    }
+    if (remoteConfigNodeId && remoteConfigNodeId === runtimeMatchedNode.node.id) {
+      return;
+    }
+    if (!remoteConfigNodeId) {
+      setRemoteConfigNodeId(runtimeMatchedNode.node.id);
+      return;
+    }
+    if (!remoteSupportedNodes.some((item) => item.id === remoteConfigNodeId)) {
+      setRemoteConfigNodeId(runtimeMatchedNode.node.id);
+    }
+  }, [remoteConfigNodeId, remoteConfigSource?.id, remoteSupportedNodes, runtimeMatchedNode]);
 
   useEffect(() => {
     if (!vm.applyBusy || !realtimeLogRef.current) {
@@ -192,11 +315,11 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
   };
 
   const onDeployFromRemoteConfig = async () => {
-    if (!selectedConfig || !selectedRemoteConfigNode) {
+    if (!remoteConfigSource || !selectedRemoteConfigNode) {
       return;
     }
     await vm.onApplyNode(
-      selectedConfig,
+      remoteConfigSource,
       selectedRemoteConfigNode,
       applyProfileId,
       applyUseSudo,
@@ -309,6 +432,18 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
             <p className="status-line">
               这些配置会作为“应用到服务器”弹窗与本页部署操作的默认值。
             </p>
+            {remoteConfigSource ? (
+              <p className="status-line">节点来源订阅：{remoteConfigSource.subscription_url}</p>
+            ) : (
+              <p className="status-line">当前无可用订阅节点，请先在“远程代理管理”解析订阅。</p>
+            )}
+            {currentRuntimeConfig?.config_exists && (
+              <p className="status-line">
+                {runtimeMatchedNode
+                  ? `已匹配远程当前节点：${runtimeMatchedNode.node.name} (${runtimeMatchedNode.node.server}:${runtimeMatchedNode.node.port})`
+                  : '未在本地订阅中匹配到远程当前节点，请更新订阅后重试。'}
+              </p>
+            )}
 
             <div className="card-actions">
               <button
@@ -453,21 +588,23 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
               </div>
             )}
 
-            {selectedConfig && (
+            {remoteConfigSource && (
               <div className="environment-proxy-form-grid">
                 <label className="field-label environment-proxy-field-wide">
                   代理节点
                   <select
                     value={selectedRemoteConfigNode?.id ?? ''}
                     onChange={(event) => setRemoteConfigNodeId(event.target.value)}
-                    disabled={vm.actionBusy || supportedNodes.length === 0}
+                    disabled={vm.actionBusy || remoteSupportedNodes.length === 0}
                   >
-                    {supportedNodes.length === 0 ? (
+                    {remoteSupportedNodes.length === 0 ? (
                       <option value="">当前无可部署节点</option>
                     ) : (
-                      supportedNodes.map((item) => (
+                      remoteSupportedNodes.map((item) => (
                         <option key={item.id} value={item.id}>
-                          {item.name} ({item.server}:{item.port}) {typeof item.latency_ms === 'number' ? `· ${item.latency_ms}ms` : ''}
+                          {item.name} ({item.server}:{item.port}){' '}
+                          {typeof item.latency_ms === 'number' ? `· ${item.latency_ms}ms` : ''}
+                          {runtimeMatchedNode?.node.id === item.id ? ' · 远程当前生效' : ''}
                         </option>
                       ))
                     )}
@@ -480,7 +617,7 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
               <button
                 type="button"
                 onClick={() => void onDeployFromRemoteConfig()}
-                disabled={vm.actionBusy || !selectedConfig || !selectedRemoteConfigNode || !applyProfileId}
+                disabled={vm.actionBusy || !remoteConfigSource || !selectedRemoteConfigNode || !applyProfileId}
               >
                 {vm.actionBusy ? '应用中...' : currentRuntimeStatus?.active ? '应用/切换节点' : '部署代理配置'}
               </button>

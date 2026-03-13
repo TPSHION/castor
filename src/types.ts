@@ -851,6 +851,7 @@ export type ServerProxyRuntimeOutboundSummary = {
   type: string;
   server?: string;
   server_port?: number;
+  method?: string;
 };
 
 export type ServerProxyRuntimeConfigSummary = {
