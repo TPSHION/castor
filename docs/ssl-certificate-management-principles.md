@@ -145,23 +145,28 @@
 
 当前状态（已完成）：
 
-- 菜单入口已增加：`环境部署 -> SSL证书管理`
-- 页面骨架已具备：申请参数、续期策略、证书列表（前端占位）
+- 菜单入口已落地：`环境部署 -> SSL证书管理`
+- 列表页 + 新增/编辑页已分离，新增/编辑页支持 `保存` / `重置`
+- 支持证书申请、申请并部署、续期并部署、状态同步
+- 支持下载证书链与私钥（下载前选择本地目录）
+- 支持失败步骤提示与“重试当前操作”
+- 页面内置“前置要求 + 流程步骤”说明，便于定位卡点
 
 参考文件：
 
-- `src/components/ServersView.tsx`
 - `src/components/environment/EnvironmentSslPanel.tsx`
-- `src/styles/app/environment/ssl.css`
+- `src/app/hooks/environment/useSslCertificates.ts`
+- `src/app/api/ssl.ts`
+- `src-tauri/src/ssl.rs`
+- `src-tauri/src/commands.rs`
+- `src-tauri/src/main.rs`
 
-下一步建议（按工作流执行）：
+后续建议：
 
-1. `types`：补充证书管理请求/响应类型（`src/types.ts`）
-2. `rust module`：新增 `ssl.rs` 领域模块（申请/续期/部署）
-3. `commands/main`：注册 Tauri 命令桥接
-4. `api`：新增 `src/app/api/ssl.ts`
-5. `hook`：新增 `useSslCertificates` 状态机
-6. `panel`：将占位逻辑替换为真实数据与动作
+1. DNS 提供商模板化（常见 provider 的变量键名快速填充）
+2. 操作审计增强（按证书维度聚合历史执行记录）
+3. 自动续期结果通知（失败告警/成功摘要）
+4. 证书部署适配层扩展（Nginx 之外的通用服务模板）
 
 ---
 
@@ -177,4 +182,3 @@
 1. 先看 ACME 原始错误
 2. 再看网络与 DNS
 3. 最后看部署路径与服务 reload
-

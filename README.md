@@ -23,6 +23,18 @@ Castor 是一个桌面化的远程运维工具，基于 React + TypeScript（前
 - systemd 部署管理（列表、表单、部署、控制、日志、导入）
 - nginx 服务管理（新增/导入、状态、启停重载重启、配置检测）
 
+### 证书与代理管理
+- SSL 证书管理（Let’s Encrypt）
+  - 新增/编辑独立页面（保存/重置）
+  - HTTP-01 / DNS-01 申请，申请并部署，续期并部署
+  - 流程步骤与前置要求说明、失败步骤提示与重试
+  - 证书下载（先选择本地目录）、状态同步、删除确认
+- 远程代理管理（Mihomo）
+  - 订阅节点页 + 代理配置页（部署相关能力集中）
+  - 代理模式：应用层代理版 / tun 全局版
+  - 实时部署日志、取消部署、部署后自动验通与诊断
+  - 远程状态查询（服务状态、部署模式、运行模式、当前代理节点）
+
 ### 运行环境管理
 - 远程运行时探测（Node / Java / Go / Python）
 - 运行时部署（版本列表、计划预览、实时日志、取消）
@@ -43,6 +55,8 @@ Castor 是一个桌面化的远程运维工具，基于 React + TypeScript（前
 - `src-tauri/src/localfs.rs`：本地文件系统操作
 - `src-tauri/src/deploy.rs`：systemd 部署与日志
 - `src-tauri/src/nginx.rs`：nginx 管理
+- `src-tauri/src/ssl.rs`：SSL 证书管理（申请/续期/部署/下载）
+- `src-tauri/src/proxy.rs`：远程代理管理（订阅解析/Mihomo 部署/状态查询）
 - `src-tauri/src/runtime.rs`：运行环境探测
 - `src-tauri/src/runtime_deploy.rs`：运行环境部署
 - `src-tauri/src/commands.rs`：Tauri 命令桥接
@@ -102,6 +116,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 - 编码规范：`docs/coding-standards.md`
 - 功能开发工作流：`docs/feature-delivery-workflow.md`
 - SSL证书管理原理：`docs/ssl-certificate-management-principles.md`
+- 最新功能改动总结：`docs/latest-feature-updates-2026-03-13.md`
 - 大文件优化计划：`docs/large-file-optimization-plan.md`
 
 ## 注意事项

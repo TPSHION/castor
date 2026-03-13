@@ -21,6 +21,8 @@
 | systemd 详情控制（状态/启停重启） | `src/components/ServersView.tsx`, `src/app/api/profiles.ts` | `src-tauri/src/deploy.rs` | `get_systemd_deploy_service_status`, `control_systemd_deploy_service` |
 | systemd 日志（查看/实时/全屏） | `src/components/ServersView.tsx`, `src/app/api/profiles.ts` | `src-tauri/src/deploy.rs` | `get_systemd_deploy_service_logs` |
 | 从已有 systemd 服务导入 | `src/components/ServersView.tsx`, `src/app/api/profiles.ts` | `src-tauri/src/deploy.rs` | `list_remote_systemd_services`, `get_remote_systemd_service_template` |
+| SSL 证书管理（申请/续期/部署/下载） | `src/components/environment/EnvironmentSslPanel.tsx`, `src/app/hooks/environment/useSslCertificates.ts`, `src/app/api/ssl.ts` | `src-tauri/src/ssl.rs` | `list_ssl_certificates`, `upsert_ssl_certificate`, `issue_ssl_certificate`, `renew_ssl_certificate`, `apply_ssl_certificate`, `sync_ssl_certificate_status` |
+| 远程代理管理（Mihomo） | `src/components/environment/EnvironmentMihomoPanel.tsx`, `src/app/hooks/environment/useEnvironmentMihomo.ts`, `src/app/api/proxy.ts` | `src-tauri/src/proxy.rs` | `sync_server_proxy_subscription`, `test_server_proxy_connectivity`, `apply_mihomo_proxy_node`, `get_mihomo_runtime_status`, `cancel_server_proxy_apply`, `mihomo-apply-log` |
 | SFTP 列表/浏览 | `src/App.tsx`, `src/components/SftpView.tsx` | `src-tauri/src/sftp.rs` | `sftp_list_dir` |
 | 上传（含冲突策略） | `src/App.tsx`, `src/components/LocalUploadConflictDialog.tsx`, `src/app/hooks/useSystemDropUploadQueue.ts` | `src-tauri/src/sftp.rs` | `sftp_upload_path`, `cancel_sftp_transfer`, `sftp-transfer-progress` |
 | 下载 | `src/App.tsx`, `src/components/SftpView.tsx` | `src-tauri/src/sftp.rs` | `sftp_download_file`, `cancel_sftp_transfer`, `sftp-transfer-progress` |
@@ -40,6 +42,8 @@
 - `src-tauri/src/commands.rs`：对外命令路由层（thin wrapper）
 - `src-tauri/src/ssh/mod.rs`：SSH 会话与本地 PTY 生命周期、输入输出、resize、状态事件
 - `src-tauri/src/deploy.rs`：systemd 部署服务配置持久化、远端 apply/控制、日志查询、远端导入、连接池复用
+- `src-tauri/src/ssl.rs`：证书记录持久化、远端 ACME 申请/续期、部署与证书下载
+- `src-tauri/src/proxy.rs`：订阅节点解析、连通性测试、Mihomo 部署、运行状态与配置匹配
 - `src-tauri/src/sftp.rs`：SFTP 目录操作、递归上传下载、冲突策略、权限、进度与取消
 - `src-tauri/src/localfs.rs`：本地目录浏览/重命名/删除/建目录
 - `src-tauri/src/profiles.rs`：配置文件持久化（`connection_profiles.json`）
@@ -51,6 +55,8 @@
 | 调整终端交互（输入/resize/状态） | `src/components/TerminalView.tsx`, `src-tauri/src/ssh/mod.rs` |
 | 调整 systemd 页面流程（列表/表单/详情） | `src/components/ServersView.tsx`, `src/styles/app.css`, `src/app/api/profiles.ts`, `src/types.ts` |
 | 调整 systemd 后端行为（部署/控制/日志/导入） | `src-tauri/src/deploy.rs`, `src-tauri/src/commands.rs`, `src-tauri/src/main.rs`, `src/types.ts` |
+| 调整 SSL 页面或申请流程 | `src/components/environment/EnvironmentSslPanel.tsx`, `src/app/hooks/environment/useSslCertificates.ts`, `src/app/api/ssl.ts`, `src-tauri/src/ssl.rs`, `src/types.ts` |
+| 调整远程代理（Mihomo）流程 | `src/components/environment/EnvironmentMihomoPanel.tsx`, `src/app/hooks/environment/useEnvironmentMihomo.ts`, `src/app/api/proxy.ts`, `src-tauri/src/proxy.rs`, `src/types.ts` |
 | 调整上传下载进度显示 | `src/app/hooks/useTransferProgressManager.ts`, `src/components/TransferTasksPanelModal.tsx`, `src/App.tsx` |
 | 新增 SFTP 操作命令 | `src-tauri/src/sftp.rs`, `src-tauri/src/commands.rs`, `src/types.ts`, `src/App.tsx` |
 | 调整服务器配置字段 | `src/components/ServerEditorModal.tsx`, `src/types.ts`, `src-tauri/src/profiles.rs` |
