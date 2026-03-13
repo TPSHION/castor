@@ -63,7 +63,7 @@ export function useProfilesManager() {
       username: profile.username,
       authKind: profile.auth_kind,
       password: profile.password ?? '',
-      privateKey: profile.private_key ?? '',
+      privateKeyPath: profile.private_key ?? '',
       passphrase: profile.passphrase ?? ''
     });
     setTestState({ phase: 'idle', message: '' });
@@ -101,7 +101,7 @@ export function useProfilesManager() {
       username: editor.username.trim(),
       auth_kind: editor.authKind,
       password: editor.authKind === 'password' ? editor.password : undefined,
-      private_key: editor.authKind === 'private_key' ? editor.privateKey : undefined,
+      private_key: editor.authKind === 'private_key' ? editor.privateKeyPath.trim() : undefined,
       passphrase: editor.authKind === 'private_key' && editor.passphrase ? editor.passphrase : undefined
     };
 

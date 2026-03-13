@@ -140,7 +140,7 @@ fn validate_request(request: &UpsertConnectionProfileRequest) -> Result<(), Stri
                 .trim()
                 .is_empty()
             {
-                return Err("private_key is required for private key auth".to_string());
+                return Err("private_key (file path) is required for private key auth".to_string());
             }
         }
         _ => {}

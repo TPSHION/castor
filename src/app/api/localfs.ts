@@ -26,3 +26,7 @@ export function localCreateDir(request: LocalCreateDirRequest) {
 export function pickLocalDirectory() {
   return invokeTauri<string | null>('pick_local_directory');
 }
+
+export function pickLocalFile() {
+  return invokeTauri<string | null>('pick_local_file');
+}

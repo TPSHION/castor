@@ -13,7 +13,7 @@ use ssh2::{FileStat, Session};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
-use crate::ssh::AuthConfig;
+use crate::ssh::{authenticate_session, AuthConfig};
 
 const S_IFMT: u32 = 0o170000;
 const S_IFDIR: u32 = 0o040000;
@@ -775,21 +775,7 @@ fn connect_sftp(
         .handshake()
         .map_err(|err| format!("ssh handshake failed: {err}"))?;
 
-    match auth {
-        AuthConfig::Password { password } => session
-            .userauth_password(username, password)
-            .map_err(|err| format!("password authentication failed: {err}"))?,
-        AuthConfig::PrivateKey {
-            private_key,
-            passphrase,
-        } => session
-            .userauth_pubkey_memory(username, None, private_key, passphrase.as_deref())
-            .map_err(|err| format!("private key authentication failed: {err}"))?,
-    }
-
-    if !session.authenticated() {
-        return Err("ssh authentication was rejected".to_string());
-    }
+    authenticate_session(&mut session, username, auth)?;
 
     let sftp = session
         .sftp()

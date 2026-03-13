@@ -505,6 +505,14 @@ pub fn pick_local_directory() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+pub fn pick_local_file() -> Result<Option<String>, String> {
+    Ok(rfd::FileDialog::new()
+        .add_filter("Private Key", &["pem", "key", "ppk"])
+        .pick_file()
+        .map(|path| path.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
 pub fn sftp_rename_entry(request: SftpRenameRequest) -> Result<(), String> {
     sftp_rename_entry_impl(request)
 }

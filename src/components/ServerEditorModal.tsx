@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
+import { pickLocalFile } from '../app/api/localfs';
+import { formatInvokeError } from '../app/helpers';
 import type { ProfileEditor, EditorMode, TestState, AuthType } from '../app/types';
 
 type ServerEditorModalProps = {
@@ -26,6 +29,27 @@ export function ServerEditorModal({
   onSave,
   setEditor
 }: ServerEditorModalProps) {
+  const [pickFileError, setPickFileError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setPickFileError(null);
+    }
+  }, [isOpen]);
+
+  async function onPickPrivateKeyFile() {
+    try {
+      setPickFileError(null);
+      const filePath = await pickLocalFile();
+      if (!filePath) {
+        return;
+      }
+      setEditor((prev) => ({ ...prev, privateKeyPath: filePath }));
+    } catch (error) {
+      setPickFileError(formatInvokeError(error));
+    }
+  }
+
   if (!isOpen) {
     return null;
   }
@@ -140,18 +164,29 @@ export function ServerEditorModal({
           ) : (
             <>
               <label>
-                私钥 (PEM)
-                <textarea
-                  rows={6}
-                  value={editor.privateKey}
+                私钥文件
+                <input
+                  value={editor.privateKeyPath}
                   autoComplete="off"
                   autoCorrect="off"
                   autoCapitalize="none"
                   spellCheck={false}
-                  onChange={(event) => setEditor((prev) => ({ ...prev, privateKey: event.target.value }))}
-                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                  onChange={(event) => setEditor((prev) => ({ ...prev, privateKeyPath: event.target.value }))}
+                  placeholder="请选择本地私钥文件路径"
                 />
               </label>
+              <div className="editor-modal-inline-actions">
+                <button type="button" onClick={() => void onPickPrivateKeyFile()} disabled={editorBusy}>
+                  选择私钥文件
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditor((prev) => ({ ...prev, privateKeyPath: '' }))}
+                  disabled={editorBusy || !editor.privateKeyPath}
+                >
+                  清空路径
+                </button>
+              </div>
               <label>
                 私钥口令 (可选)
                 <input
@@ -162,8 +197,9 @@ export function ServerEditorModal({
                   autoCorrect="off"
                   autoCapitalize="none"
                   spellCheck={false}
-                />
-              </label>
+              />
+            </label>
+              {pickFileError && <p className="status-line error">{pickFileError}</p>}
             </>
           )}
 

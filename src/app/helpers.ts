@@ -88,7 +88,7 @@ export function createEmptyEditor(): ProfileEditor {
     username: '',
     authKind: 'password',
     password: '',
-    privateKey: '',
+    privateKeyPath: '',
     passphrase: ''
   };
 }
@@ -144,8 +144,8 @@ export function validateEditor(editor: ProfileEditor): string | null {
   if (editor.authKind === 'password' && !editor.password) {
     return '密码认证必须填写密码';
   }
-  if (editor.authKind === 'private_key' && !editor.privateKey.trim()) {
-    return '私钥认证必须填写私钥';
+  if (editor.authKind === 'private_key' && !editor.privateKeyPath.trim()) {
+    return '私钥认证必须选择私钥文件';
   }
   return null;
 }
@@ -182,7 +182,7 @@ export function buildAuthFromEditor(editor: ProfileEditor): AuthConfig {
 
   return {
     kind: 'private_key',
-    private_key: editor.privateKey,
+    private_key: editor.privateKeyPath,
     passphrase: editor.passphrase || undefined
   };
 }

@@ -13,7 +13,7 @@ export type ProfileEditor = {
   username: string;
   authKind: AuthType;
   password: string;
-  privateKey: string;
+  privateKeyPath: string;
   passphrase: string;
 };
 

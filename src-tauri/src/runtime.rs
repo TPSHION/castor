@@ -9,7 +9,7 @@ use ssh2::Session;
 use tauri::AppHandle;
 
 use crate::profiles::{list_connection_profiles, ConnectionProfile};
-use crate::ssh::AuthConfig;
+use crate::ssh::{authenticate_session, AuthConfig};
 
 const MAX_RUNTIME_MATCHES: usize = 8;
 
@@ -420,21 +420,7 @@ fn connect_ssh_profile(profile: &ConnectionProfile) -> Result<Session, String> {
         .handshake()
         .map_err(|err| format!("ssh handshake failed: {err}"))?;
 
-    match auth {
-        AuthConfig::Password { password } => session
-            .userauth_password(&profile.username, &password)
-            .map_err(|err| format!("password authentication failed: {err}"))?,
-        AuthConfig::PrivateKey {
-            private_key,
-            passphrase,
-        } => session
-            .userauth_pubkey_memory(&profile.username, None, &private_key, passphrase.as_deref())
-            .map_err(|err| format!("private key authentication failed: {err}"))?,
-    }
-
-    if !session.authenticated() {
-        return Err("ssh authentication was rejected".to_string());
-    }
+    authenticate_session(&mut session, &profile.username, &auth)?;
     Ok(session)
 }
 

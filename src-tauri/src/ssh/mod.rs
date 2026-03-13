@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::net::TcpStream;
+use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -22,6 +24,64 @@ pub enum AuthConfig {
         private_key: String,
         passphrase: Option<String>,
     },
+}
+
+fn with_temp_private_key_file<T, F>(private_key: &str, task: F) -> Result<T, String>
+where
+    F: FnOnce(&Path) -> Result<T, String>,
+{
+    let temp_path = env::temp_dir().join(format!("castor-ssh-key-{}.pem", Uuid::new_v4()));
+    fs::write(&temp_path, private_key)
+        .map_err(|err| format!("failed to prepare temporary private key file: {err}"))?;
+    let result = task(&temp_path);
+    let _ = fs::remove_file(&temp_path);
+    result
+}
+
+fn authenticate_with_private_key(
+    session: &mut Session,
+    username: &str,
+    private_key: &str,
+    passphrase: Option<&str>,
+) -> Result<(), String> {
+    let trimmed = private_key.trim();
+    if trimmed.starts_with("-----BEGIN ") {
+        return with_temp_private_key_file(private_key, |key_path| {
+            session
+                .userauth_pubkey_file(username, None, key_path, passphrase)
+                .map_err(|err| format!("private key authentication failed: {err}"))
+        });
+    }
+
+    let key_path = Path::new(trimmed);
+    if !key_path.exists() {
+        return Err(format!("private key file not found: {trimmed}"));
+    }
+
+    session
+        .userauth_pubkey_file(username, None, key_path, passphrase)
+        .map_err(|err| format!("private key authentication failed: {err}"))
+}
+
+pub fn authenticate_session(
+    session: &mut Session,
+    username: &str,
+    auth: &AuthConfig,
+) -> Result<(), String> {
+    match auth {
+        AuthConfig::Password { password } => session
+            .userauth_password(username, password)
+            .map_err(|err| format!("password authentication failed: {err}"))?,
+        AuthConfig::PrivateKey {
+            private_key,
+            passphrase,
+        } => authenticate_with_private_key(session, username, private_key, passphrase.as_deref())?,
+    }
+
+    if !session.authenticated() {
+        return Err("ssh authentication was rejected".to_string());
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -287,21 +347,7 @@ fn connect_blocking(
         .handshake()
         .map_err(|err| format!("ssh handshake failed: {err}"))?;
 
-    match request.auth {
-        AuthConfig::Password { password } => session
-            .userauth_password(&username, &password)
-            .map_err(|err| format!("password authentication failed: {err}"))?,
-        AuthConfig::PrivateKey {
-            private_key,
-            passphrase,
-        } => session
-            .userauth_pubkey_memory(&username, None, &private_key, passphrase.as_deref())
-            .map_err(|err| format!("private key authentication failed: {err}"))?,
-    }
-
-    if !session.authenticated() {
-        return Err("ssh authentication was rejected".to_string());
-    }
+    authenticate_session(&mut session, &username, &request.auth)?;
 
     let mut channel = session
         .channel_session()
@@ -616,21 +662,7 @@ fn test_connection_blocking(request: ConnectRequest) -> Result<(), String> {
         .handshake()
         .map_err(|err| format!("ssh handshake failed: {err}"))?;
 
-    match request.auth {
-        AuthConfig::Password { password } => session
-            .userauth_password(&username, &password)
-            .map_err(|err| format!("password authentication failed: {err}"))?,
-        AuthConfig::PrivateKey {
-            private_key,
-            passphrase,
-        } => session
-            .userauth_pubkey_memory(&username, None, &private_key, passphrase.as_deref())
-            .map_err(|err| format!("private key authentication failed: {err}"))?,
-    }
-
-    if !session.authenticated() {
-        return Err("ssh authentication was rejected".to_string());
-    }
+    authenticate_session(&mut session, &username, &request.auth)?;
 
     let mut channel = session
         .channel_session()
