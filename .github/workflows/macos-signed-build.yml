@@ -33,7 +33,6 @@ jobs:
       APPLE_API_KEY: M4PXT78BFC
       APPLE_API_ISSUER: 283a2b54-c0ae-4199-87ef-ee952625f716
       APPLE_TEAM_ID: 4B7HL75P84
-      APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey_M4PXT78BFC.p8
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
@@ -71,6 +70,10 @@ jobs:
           test -n "$APPLE_CERTIFICATE" || (echo "::error::Missing secret APPLE_CERTIFICATE" && exit 1)
           test -n "$APPLE_CERTIFICATE_PASSWORD" || (echo "::error::Missing secret APPLE_CERTIFICATE_PASSWORD" && exit 1)
           test -n "$APPLE_API_KEY_P8" || (echo "::error::Missing secret APPLE_API_KEY_P8" && exit 1)
+
+      - name: Set App Store Connect key path
+        shell: bash
+        run: echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey_M4PXT78BFC.p8" >> "$GITHUB_ENV"
 
       - name: Prepare App Store Connect API key file
         shell: bash
