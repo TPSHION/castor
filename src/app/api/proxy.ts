@@ -1,10 +1,14 @@
 import type {
+  ApplyMihomoProxyNodeRequest,
   ApplyServerProxyNodeRequest,
   CancelServerProxyApplyRequest,
   DeleteServerProxyConfigRequest,
+  GetMihomoRuntimeStatusRequest,
   GetServerProxyRuntimeConfigRequest,
   GetServerProxyRuntimeStatusRequest,
   ListServerProxyConfigsRequest,
+  MihomoProxyApplyResult,
+  MihomoRuntimeStatusResult,
   ServerProxyApplyResult,
   ServerProxyCancelResult,
   ServerProxyConfig,
@@ -35,6 +39,10 @@ export function applyServerProxyNode(request: ApplyServerProxyNodeRequest) {
   return invokeTauriWithRequest<ServerProxyApplyResult, ApplyServerProxyNodeRequest>('apply_server_proxy_node', request);
 }
 
+export function applyMihomoProxyNode(request: ApplyMihomoProxyNodeRequest) {
+  return invokeTauriWithRequest<MihomoProxyApplyResult, ApplyMihomoProxyNodeRequest>('apply_mihomo_proxy_node', request);
+}
+
 export function testServerProxyConnectivity(request: TestServerProxyConnectivityRequest) {
   return invokeTauriWithRequest<ServerProxyConnectivityResult, TestServerProxyConnectivityRequest>(
     'test_server_proxy_connectivity',
@@ -45,6 +53,13 @@ export function testServerProxyConnectivity(request: TestServerProxyConnectivity
 export function getServerProxyRuntimeStatus(request: GetServerProxyRuntimeStatusRequest) {
   return invokeTauriWithRequest<ServerProxyRuntimeStatusResult, GetServerProxyRuntimeStatusRequest>(
     'get_server_proxy_runtime_status',
+    request
+  );
+}
+
+export function getMihomoRuntimeStatus(request: GetMihomoRuntimeStatusRequest) {
+  return invokeTauriWithRequest<MihomoRuntimeStatusResult, GetMihomoRuntimeStatusRequest>(
+    'get_mihomo_runtime_status',
     request
   );
 }

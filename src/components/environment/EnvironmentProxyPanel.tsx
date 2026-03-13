@@ -3,6 +3,7 @@ import { formatUnixTime } from '../../app/helpers';
 import { useEnvironmentProxy } from '../../app/hooks/environment/useEnvironmentProxy';
 import type {
   ConnectionProfile,
+  ProxyApplyMode,
   ProxyNode,
   ServerProxyConfig,
   ServerProxyRuntimeConfigSummary,
@@ -17,7 +18,8 @@ const PROXY_APPLY_STEPS = [
   '检查并安装 sing-box',
   '写入代理配置与服务文件',
   '重载并重启代理服务',
-  '校验代理服务状态'
+  '校验代理服务状态',
+  '部署后自动验通与关键诊断'
 ];
 
 function getConnectivityStatusTone(node: ProxyNode): StatusTone {
@@ -128,6 +130,14 @@ function nodeMatchesRuntimeOutbound(node: ProxyNode, outbound: ServerProxyRuntim
   return normalizeMethod(node.method) === remoteMethod;
 }
 
+function detectApplyModeFromSummary(summary?: ServerProxyRuntimeConfigSummary): ProxyApplyMode {
+  if (!summary) {
+    return 'application';
+  }
+  const hasTunInbound = summary.inbounds.some((item) => normalizeProtocol(item.type) === 'tun');
+  return hasTunInbound ? 'tun_global' : 'application';
+}
+
 export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfile[] }) {
   const vm = useEnvironmentProxy(profiles);
   const [activePage, setActivePage] = useState<'nodes' | 'remote_config'>('nodes');
@@ -138,6 +148,7 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
   const [applyProfileId, setApplyProfileId] = useState(profiles[0]?.id ?? '');
   const [applyUseSudo, setApplyUseSudo] = useState(true);
   const [applyMixedPort, setApplyMixedPort] = useState(7890);
+  const [applyMode, setApplyMode] = useState<ProxyApplyMode>('application');
   const [remoteConfigNodeId, setRemoteConfigNodeId] = useState('');
   const realtimeLogRef = useRef<HTMLPreElement | null>(null);
   const selectedConfig = vm.selectedConfig;
@@ -239,6 +250,17 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
   }, [activePage, applyProfileId, applyUseSudo, onCheckRuntimeStatus, onLoadRuntimeConfig]);
 
   useEffect(() => {
+    if (activePage !== 'remote_config') {
+      return;
+    }
+    if (!currentRuntimeConfig?.summary) {
+      return;
+    }
+    const detectedMode = detectApplyModeFromSummary(currentRuntimeConfig.summary);
+    setApplyMode((previous) => (previous === detectedMode ? previous : detectedMode));
+  }, [activePage, currentRuntimeConfig?.summary, currentRuntimeConfig?.checked_at]);
+
+  useEffect(() => {
     if (remoteSupportedNodes.length === 0) {
       setRemoteConfigNodeId('');
       return;
@@ -307,7 +329,8 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
       applyTarget.node,
       applyProfileId,
       applyUseSudo,
-      applyMixedPort
+      applyMixedPort,
+      applyMode
     );
     if (success) {
       setApplyTarget(null);
@@ -323,7 +346,8 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
       selectedRemoteConfigNode,
       applyProfileId,
       applyUseSudo,
-      applyMixedPort
+      applyMixedPort,
+      applyMode
     );
   };
 
@@ -394,6 +418,34 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
             </header>
 
             <div className="environment-proxy-form-grid">
+              <label className="field-label environment-proxy-field-wide">
+                默认部署模式
+                <div className="environment-proxy-mode-switch">
+                  <label>
+                    <input
+                      type="radio"
+                      name="proxy-apply-mode-default"
+                      value="application"
+                      checked={applyMode === 'application'}
+                      onChange={() => setApplyMode('application')}
+                      disabled={vm.actionBusy}
+                    />
+                    应用层代理版
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="proxy-apply-mode-default"
+                      value="tun_global"
+                      checked={applyMode === 'tun_global'}
+                      onChange={() => setApplyMode('tun_global')}
+                      disabled={vm.actionBusy}
+                    />
+                    tun 全局版
+                  </label>
+                </div>
+              </label>
+
               <label className="field-label">
                 默认目标服务器
                 <select value={applyProfileId} onChange={(event) => setApplyProfileId(event.target.value)} disabled={vm.actionBusy}>
@@ -414,11 +466,14 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
                   max={65535}
                   value={applyMixedPort}
                   onChange={(event) => setApplyMixedPort(Number(event.target.value) || 7890)}
-                  disabled={vm.actionBusy}
+                  disabled={vm.actionBusy || applyMode === 'tun_global'}
                 />
               </label>
             </div>
 
+            <p className="status-line">
+              当前模式：{applyMode === 'application' ? '应用层代理版（仅对显式使用代理的程序生效）' : 'tun 全局版（系统流量由 tun 接管）'}
+            </p>
             <label className="environment-proxy-option">
               <input
                 type="checkbox"
@@ -890,9 +945,43 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
                 max={65535}
                 value={applyMixedPort}
                 onChange={(event) => setApplyMixedPort(Number(event.target.value) || 7890)}
-                disabled={vm.actionBusy}
+                disabled={vm.actionBusy || applyMode === 'tun_global'}
               />
             </label>
+
+            <label className="field-label">
+              部署模式（必选）
+              <div className="environment-proxy-mode-switch">
+                <label>
+                  <input
+                    type="radio"
+                    name="proxy-apply-mode-modal"
+                    value="application"
+                    checked={applyMode === 'application'}
+                    onChange={() => setApplyMode('application')}
+                    disabled={vm.actionBusy}
+                  />
+                  应用层代理版
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="proxy-apply-mode-modal"
+                    value="tun_global"
+                    checked={applyMode === 'tun_global'}
+                    onChange={() => setApplyMode('tun_global')}
+                    disabled={vm.actionBusy}
+                  />
+                  tun 全局版
+                </label>
+              </div>
+            </label>
+
+            <p className="status-line">
+              {applyMode === 'application'
+                ? '应用层代理版：需要应用显式使用 http/socks 代理地址。'
+                : 'tun 全局版：由 sing-box 创建 tun 接口接管系统流量。'}
+            </p>
 
             <label className="environment-proxy-option">
               <input

@@ -68,6 +68,27 @@
   padding: 0;
 }
 
+.environment-proxy-mode-switch {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.environment-proxy-mode-switch label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #c9d7f0;
+  font-size: 0.8rem;
+}
+
+.environment-proxy-mode-switch input[type='radio'] {
+  width: auto;
+  margin: 0;
+  padding: 0;
+}
+
 .environment-proxy-guide {
   border: 1px dashed #476086;
   border-radius: 8px;

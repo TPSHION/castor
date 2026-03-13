@@ -4,7 +4,7 @@ import { SystemdDeployPanel } from './SystemdDeployPanel';
 import { NginxServicePanel } from './NginxServicePanel';
 import { EnvironmentConfigPanel } from './environment/EnvironmentConfigPanel';
 import { EnvironmentDeployPanel } from './environment/EnvironmentDeployPanel';
-import { EnvironmentProxyPanel } from './environment/EnvironmentProxyPanel';
+import { EnvironmentMihomoPanel } from './environment/EnvironmentMihomoPanel';
 import { EnvironmentSslPanel } from './environment/EnvironmentSslPanel';
 
 type ServersViewProps = {
@@ -265,7 +265,7 @@ export function ServersView({
         ) : activeMenu === 'environment_ssl' ? (
           <EnvironmentSslPanel profiles={profiles} />
         ) : activeMenu === 'environment_proxy' ? (
-          <EnvironmentProxyPanel profiles={profiles} />
+          <EnvironmentMihomoPanel profiles={profiles} />
         ) : (
           <div className="empty-state">设置内容将在这里展示。</div>
         )}

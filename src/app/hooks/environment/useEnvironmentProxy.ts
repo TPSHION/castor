@@ -13,6 +13,7 @@ import {
 import { formatInvokeError } from '../../helpers';
 import type {
   ConnectionProfile,
+  ProxyApplyMode,
   ProxyNode,
   ProxyApplyLogPayload,
   ServerProxyApplyResult,
@@ -280,7 +281,8 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
       node: ProxyNode,
       profileId: string,
       useSudo: boolean,
-      localMixedPort: number
+      localMixedPort: number,
+      applyMode: ProxyApplyMode
     ) => {
       const targetProfileId = profileId.trim();
       if (!targetProfileId) {
@@ -304,7 +306,8 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
           apply_id: applyId,
           profile_id: targetProfileId,
           use_sudo: useSudo,
-          local_mixed_port: clampMixedPort(localMixedPort)
+          local_mixed_port: clampMixedPort(localMixedPort),
+          apply_mode: applyMode
         });
         setConfigs((prev) => prev.map((item) => (item.id === result.config.id ? result.config : item)));
         setLastApplyLog({

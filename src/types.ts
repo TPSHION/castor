@@ -786,7 +786,20 @@ export type ApplyServerProxyNodeRequest = {
   profile_id?: string;
   use_sudo?: boolean;
   local_mixed_port?: number;
+  apply_mode?: ProxyApplyMode;
 };
+
+export type ApplyMihomoProxyNodeRequest = {
+  id: string;
+  node_id: string;
+  apply_id?: string;
+  profile_id?: string;
+  use_sudo?: boolean;
+  local_mixed_port?: number;
+  apply_mode?: ProxyApplyMode;
+};
+
+export type ProxyApplyMode = 'application' | 'tun_global';
 
 export type CancelServerProxyApplyRequest = {
   apply_id: string;
@@ -821,6 +834,11 @@ export type GetServerProxyRuntimeStatusRequest = {
   use_sudo?: boolean;
 };
 
+export type GetMihomoRuntimeStatusRequest = {
+  profile_id: string;
+  use_sudo?: boolean;
+};
+
 export type GetServerProxyRuntimeConfigRequest = {
   profile_id: string;
   use_sudo?: boolean;
@@ -833,6 +851,21 @@ export type ServerProxyRuntimeStatusResult = {
   active: boolean;
   enabled: boolean;
   config_exists: boolean;
+  checked_at: number;
+  message: string;
+  stdout: string;
+  stderr: string;
+};
+
+export type MihomoRuntimeStatusResult = {
+  profile_id: string;
+  service_name: string;
+  config_path: string;
+  installed: boolean;
+  active: boolean;
+  enabled: boolean;
+  config_exists: boolean;
+  mode?: string;
   checked_at: number;
   message: string;
   stdout: string;
@@ -888,6 +921,19 @@ export type ServerProxyCancelResult = {
   stderr: string;
   exit_status: number;
   message: string;
+};
+
+export type MihomoProxyApplyResult = {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exit_status: number;
+  message: string;
+  service_name: string;
+  config_path: string;
+  apply_mode: ProxyApplyMode;
+  local_http_proxy?: string;
+  local_socks_proxy?: string;
 };
 
 export type ProxyApplyLogPayload = {

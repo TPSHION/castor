@@ -55,20 +55,23 @@ use crate::profiles::{
     DeleteConnectionProfileRequest, UpsertConnectionProfileRequest,
 };
 use crate::proxy::{
+    apply_mihomo_proxy_node as apply_mihomo_proxy_node_impl,
     apply_server_proxy_node as apply_server_proxy_node_impl,
     cancel_server_proxy_apply as cancel_server_proxy_apply_impl,
     delete_server_proxy_config as delete_server_proxy_config_impl,
+    get_mihomo_runtime_status as get_mihomo_runtime_status_impl,
     get_server_proxy_runtime_config as get_server_proxy_runtime_config_impl,
     get_server_proxy_runtime_status as get_server_proxy_runtime_status_impl,
     list_server_proxy_configs as list_server_proxy_configs_impl,
     sync_server_proxy_subscription as sync_server_proxy_subscription_impl,
     test_server_proxy_connectivity as test_server_proxy_connectivity_impl,
-    ApplyServerProxyNodeRequest, CancelServerProxyApplyRequest, DeleteServerProxyConfigRequest,
+    ApplyMihomoProxyNodeRequest, ApplyServerProxyNodeRequest, CancelServerProxyApplyRequest,
+    DeleteServerProxyConfigRequest, GetMihomoRuntimeStatusRequest,
     GetServerProxyRuntimeConfigRequest, GetServerProxyRuntimeStatusRequest,
-    ListServerProxyConfigsRequest, ServerProxyApplyResult, ServerProxyCancelResult,
-    ServerProxyConfig, ServerProxyConnectivityResult, ServerProxyRuntimeConfigResult,
-    ServerProxyRuntimeStatusResult, SyncServerProxySubscriptionRequest,
-    TestServerProxyConnectivityRequest,
+    ListServerProxyConfigsRequest, MihomoProxyApplyResult, MihomoRuntimeStatusResult,
+    ServerProxyApplyResult, ServerProxyCancelResult, ServerProxyConfig,
+    ServerProxyConnectivityResult, ServerProxyRuntimeConfigResult, ServerProxyRuntimeStatusResult,
+    SyncServerProxySubscriptionRequest, TestServerProxyConnectivityRequest,
 };
 use crate::runtime::{
     cancel_server_runtime_probe as cancel_server_runtime_probe_impl,
@@ -292,6 +295,17 @@ pub async fn apply_server_proxy_node(
 }
 
 #[tauri::command]
+pub async fn apply_mihomo_proxy_node(
+    app: AppHandle,
+    request: ApplyMihomoProxyNodeRequest,
+) -> Result<MihomoProxyApplyResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || apply_mihomo_proxy_node_impl(&app_handle, request))
+        .await
+        .map_err(|err| format!("failed to join apply mihomo proxy node task: {err}"))?
+}
+
+#[tauri::command]
 pub async fn test_server_proxy_connectivity(
     app: AppHandle,
     request: TestServerProxyConnectivityRequest,
@@ -315,6 +329,19 @@ pub async fn get_server_proxy_runtime_status(
     })
     .await
     .map_err(|err| format!("failed to join get server proxy runtime status task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn get_mihomo_runtime_status(
+    app: AppHandle,
+    request: GetMihomoRuntimeStatusRequest,
+) -> Result<MihomoRuntimeStatusResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        get_mihomo_runtime_status_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join get mihomo runtime status task: {err}"))?
 }
 
 #[tauri::command]
