@@ -788,6 +788,11 @@ export type ApplyServerProxyNodeRequest = {
   local_mixed_port?: number;
 };
 
+export type CancelServerProxyApplyRequest = {
+  apply_id: string;
+  profile_id?: string;
+};
+
 export type ServerProxyApplyResult = {
   config: ServerProxyConfig;
   success: boolean;
@@ -816,6 +821,11 @@ export type GetServerProxyRuntimeStatusRequest = {
   use_sudo?: boolean;
 };
 
+export type GetServerProxyRuntimeConfigRequest = {
+  profile_id: string;
+  use_sudo?: boolean;
+};
+
 export type ServerProxyRuntimeStatusResult = {
   profile_id: string;
   service_name: string;
@@ -827,6 +837,56 @@ export type ServerProxyRuntimeStatusResult = {
   message: string;
   stdout: string;
   stderr: string;
+};
+
+export type ServerProxyRuntimeInboundSummary = {
+  tag?: string;
+  type: string;
+  listen?: string;
+  listen_port?: number;
+};
+
+export type ServerProxyRuntimeOutboundSummary = {
+  tag?: string;
+  type: string;
+  server?: string;
+  server_port?: number;
+};
+
+export type ServerProxyRuntimeConfigSummary = {
+  inbound_count: number;
+  outbound_count: number;
+  route_final?: string;
+  route_rule_count: number;
+  dns_server_count: number;
+  inbounds: ServerProxyRuntimeInboundSummary[];
+  outbounds: ServerProxyRuntimeOutboundSummary[];
+};
+
+export type ServerProxyRuntimeConfigResult = {
+  profile_id: string;
+  service_name: string;
+  config_path: string;
+  installed: boolean;
+  active: boolean;
+  enabled: boolean;
+  config_exists: boolean;
+  checked_at: number;
+  message: string;
+  raw_config?: string;
+  parse_error?: string;
+  summary?: ServerProxyRuntimeConfigSummary;
+  stdout: string;
+  stderr: string;
+};
+
+export type ServerProxyCancelResult = {
+  apply_id: string;
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exit_status: number;
+  message: string;
 };
 
 export type ProxyApplyLogPayload = {

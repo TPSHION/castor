@@ -2,7 +2,9 @@ import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   applyServerProxyNode,
+  cancelServerProxyApply,
   deleteServerProxyConfig,
+  getServerProxyRuntimeConfig,
   getServerProxyRuntimeStatus,
   listServerProxyConfigs,
   syncServerProxySubscription,
@@ -15,6 +17,7 @@ import type {
   ProxyApplyLogPayload,
   ServerProxyApplyResult,
   ServerProxyConfig,
+  ServerProxyRuntimeConfigResult,
   ServerProxyRuntimeStatusResult
 } from '../../../types';
 
@@ -36,6 +39,7 @@ function clampMixedPort(value: number) {
 export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
   const loadRequestIdRef = useRef<string | null>(null);
   const activeApplyIdRef = useRef<string | null>(null);
+  const activeApplyProfileIdRef = useRef<string | null>(null);
 
   const [configs, setConfigs] = useState<ServerProxyConfig[]>([]);
   const [selectedConfigId, setSelectedConfigId] = useState<string>('');
@@ -48,6 +52,8 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
   const [applyRealtimeLogs, setApplyRealtimeLogs] = useState<string[]>([]);
   const [runtimeStatusBusy, setRuntimeStatusBusy] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<ServerProxyRuntimeStatusResult | null>(null);
+  const [runtimeConfigBusy, setRuntimeConfigBusy] = useState(false);
+  const [runtimeConfig, setRuntimeConfig] = useState<ServerProxyRuntimeConfigResult | null>(null);
 
   const selectedConfig = useMemo(() => {
     if (!selectedConfigId) {
@@ -240,6 +246,34 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
     }
   }, []);
 
+  const onLoadRuntimeConfig = useCallback(async (profileId: string, useSudo = true) => {
+    const targetProfileId = profileId.trim();
+    if (!targetProfileId) {
+      setMessage('请先选择需要查询的服务器。');
+      setMessageIsError(true);
+      return null;
+    }
+
+    setRuntimeConfigBusy(true);
+    try {
+      const result = await getServerProxyRuntimeConfig({
+        profile_id: targetProfileId,
+        use_sudo: useSudo
+      });
+      setRuntimeConfig(result);
+      setMessage(result.message);
+      setMessageIsError(Boolean(result.parse_error));
+      return result;
+    } catch (error) {
+      setRuntimeConfig(null);
+      setMessage(`读取远程代理配置失败：${formatInvokeError(error)}`);
+      setMessageIsError(true);
+      return null;
+    } finally {
+      setRuntimeConfigBusy(false);
+    }
+  }, []);
+
   const onApplyNode = useCallback(
     async (
       config: ServerProxyConfig,
@@ -259,6 +293,7 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
         ? globalThis.crypto.randomUUID()
         : `proxy-apply-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
       activeApplyIdRef.current = applyId;
+      activeApplyProfileIdRef.current = targetProfileId;
       setActionBusy(true);
       setApplyBusy(true);
       setApplyRealtimeLogs([]);
@@ -280,7 +315,8 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
           result
         });
         setMessage(result.message);
-        setMessageIsError(!result.success);
+        const canceled = result.message.includes('已取消');
+        setMessageIsError(!result.success && !canceled);
         setApplyRealtimeLogs((previous) => {
           if (previous.length > 0) {
             return previous;
@@ -302,12 +338,46 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
         if (activeApplyIdRef.current === applyId) {
           activeApplyIdRef.current = null;
         }
+        if (activeApplyProfileIdRef.current === targetProfileId) {
+          activeApplyProfileIdRef.current = null;
+        }
         setApplyBusy(false);
         setActionBusy(false);
       }
     },
     [onCheckRuntimeStatus]
   );
+
+  const onCancelApply = useCallback(async () => {
+    const applyId = activeApplyIdRef.current;
+    if (!applyId) {
+      return false;
+    }
+    const profileId = activeApplyProfileIdRef.current ?? undefined;
+    try {
+      const result = await cancelServerProxyApply({
+        apply_id: applyId,
+        profile_id: profileId
+      });
+      setApplyRealtimeLogs((previous) => [
+        ...previous,
+        `[cancel] ${result.message}`,
+        ...(result.stdout
+          ? result.stdout
+              .split(/\r?\n/)
+              .map((line) => line.trim())
+              .filter((line) => line.length > 0)
+          : [])
+      ]);
+      setMessage(result.message);
+      setMessageIsError(!result.success);
+      return result.success;
+    } catch (error) {
+      setMessage(`取消代理部署失败：${formatInvokeError(error)}`);
+      setMessageIsError(true);
+      return false;
+    }
+  }, []);
 
   return {
     profiles,
@@ -323,12 +393,16 @@ export function useEnvironmentProxy(profiles: ConnectionProfile[]) {
     lastApplyLog,
     runtimeStatusBusy,
     runtimeStatus,
+    runtimeConfigBusy,
+    runtimeConfig,
     applyRealtimeLogs,
     onLoadConfigs,
     onSyncSubscription,
     onDeleteConfig,
     onTestConnectivity,
     onCheckRuntimeStatus,
-    onApplyNode
+    onLoadRuntimeConfig,
+    onApplyNode,
+    onCancelApply
   };
 }

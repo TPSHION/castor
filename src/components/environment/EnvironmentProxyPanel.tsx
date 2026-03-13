@@ -91,6 +91,12 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
     }
     return vm.runtimeStatus.profile_id === applyProfileId ? vm.runtimeStatus : null;
   }, [applyProfileId, vm.runtimeStatus]);
+  const currentRuntimeConfig = useMemo(() => {
+    if (!vm.runtimeConfig || !applyProfileId) {
+      return null;
+    }
+    return vm.runtimeConfig.profile_id === applyProfileId ? vm.runtimeConfig : null;
+  }, [applyProfileId, vm.runtimeConfig]);
   const currentApplyStepIndex = useMemo(
     () => parseCurrentApplyStepIndex(vm.applyRealtimeLogs),
     [vm.applyRealtimeLogs]
@@ -312,6 +318,13 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
               >
                 {vm.runtimeStatusBusy ? '查询中...' : '查询远程代理状态'}
               </button>
+              <button
+                type="button"
+                onClick={() => void vm.onLoadRuntimeConfig(applyProfileId, applyUseSudo)}
+                disabled={vm.actionBusy || vm.runtimeConfigBusy || !applyProfileId}
+              >
+                {vm.runtimeConfigBusy ? '读取中...' : '获取远程配置'}
+              </button>
             </div>
 
             {currentRuntimeStatus && (
@@ -323,6 +336,120 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
                 <p className="status-line">服务运行中：{currentRuntimeStatus.active ? '是' : '否'}</p>
                 <p className="status-line">开机自启：{currentRuntimeStatus.enabled ? '是' : '否'}</p>
                 <p className="status-line">查询时间：{formatUnixTime(currentRuntimeStatus.checked_at)}</p>
+              </div>
+            )}
+
+            {currentRuntimeConfig && (
+              <div className="environment-proxy-state-grid">
+                <p className="status-line">{currentRuntimeConfig.message}</p>
+                <p className="status-line">配置路径：{currentRuntimeConfig.config_path}</p>
+                <p className="status-line">读取时间：{formatUnixTime(currentRuntimeConfig.checked_at)}</p>
+                {currentRuntimeConfig.parse_error && (
+                  <p className="status-line error">配置解析提示：{currentRuntimeConfig.parse_error}</p>
+                )}
+
+                {currentRuntimeConfig.summary && (
+                  <>
+                    <div className="environment-proxy-summary-grid">
+                      <article className="environment-proxy-summary-card">
+                        <p className="environment-proxy-summary-label">入站数量</p>
+                        <p className="environment-proxy-summary-value">
+                          {currentRuntimeConfig.summary.inbound_count}
+                        </p>
+                      </article>
+                      <article className="environment-proxy-summary-card">
+                        <p className="environment-proxy-summary-label">出站数量</p>
+                        <p className="environment-proxy-summary-value">
+                          {currentRuntimeConfig.summary.outbound_count}
+                        </p>
+                      </article>
+                      <article className="environment-proxy-summary-card">
+                        <p className="environment-proxy-summary-label">路由默认出口</p>
+                        <p className="environment-proxy-summary-value">
+                          {currentRuntimeConfig.summary.route_final || '(未设置)'}
+                        </p>
+                      </article>
+                      <article className="environment-proxy-summary-card">
+                        <p className="environment-proxy-summary-label">路由规则数</p>
+                        <p className="environment-proxy-summary-value">
+                          {currentRuntimeConfig.summary.route_rule_count}
+                        </p>
+                      </article>
+                    </div>
+
+                    <div className="environment-proxy-log-grid">
+                      <div className="environment-proxy-log-card">
+                        <p className="environment-proxy-log-title">入站明细</p>
+                        <div className="environment-proxy-table-wrap">
+                          <table className="environment-proxy-table environment-proxy-table-compact">
+                            <thead>
+                              <tr>
+                                <th>tag</th>
+                                <th>type</th>
+                                <th>listen</th>
+                                <th>port</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {currentRuntimeConfig.summary.inbounds.length === 0 ? (
+                                <tr>
+                                  <td colSpan={4}>暂无入站配置</td>
+                                </tr>
+                              ) : (
+                                currentRuntimeConfig.summary.inbounds.map((inbound, index) => (
+                                  <tr key={`${inbound.tag ?? inbound.type}-${index}`}>
+                                    <td>{inbound.tag || '-'}</td>
+                                    <td>{inbound.type}</td>
+                                    <td>{inbound.listen || '-'}</td>
+                                    <td>{typeof inbound.listen_port === 'number' ? inbound.listen_port : '-'}</td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                      <div className="environment-proxy-log-card">
+                        <p className="environment-proxy-log-title">出站明细</p>
+                        <div className="environment-proxy-table-wrap">
+                          <table className="environment-proxy-table environment-proxy-table-compact">
+                            <thead>
+                              <tr>
+                                <th>tag</th>
+                                <th>type</th>
+                                <th>server</th>
+                                <th>port</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {currentRuntimeConfig.summary.outbounds.length === 0 ? (
+                                <tr>
+                                  <td colSpan={4}>暂无出站配置</td>
+                                </tr>
+                              ) : (
+                                currentRuntimeConfig.summary.outbounds.map((outbound, index) => (
+                                  <tr key={`${outbound.tag ?? outbound.type}-${index}`}>
+                                    <td>{outbound.tag || '-'}</td>
+                                    <td>{outbound.type}</td>
+                                    <td>{outbound.server || '-'}</td>
+                                    <td>{typeof outbound.server_port === 'number' ? outbound.server_port : '-'}</td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {currentRuntimeConfig.raw_config && (
+                  <details className="environment-proxy-raw-json">
+                    <summary>查看原始 sing-box 配置 JSON</summary>
+                    <pre className="environment-proxy-log">{currentRuntimeConfig.raw_config}</pre>
+                  </details>
+                )}
               </div>
             )}
 
@@ -357,6 +484,11 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
               >
                 {vm.actionBusy ? '应用中...' : currentRuntimeStatus?.active ? '应用/切换节点' : '部署代理配置'}
               </button>
+              {vm.applyBusy && (
+                <button type="button" className="danger" onClick={() => void vm.onCancelApply()}>
+                  取消部署
+                </button>
+              )}
             </div>
           </section>
         ) : vm.configs.length === 0 ? (
@@ -642,6 +774,11 @@ export function EnvironmentProxyPanel({ profiles }: { profiles: ConnectionProfil
               <button type="button" onClick={() => void onConfirmApply()} disabled={vm.actionBusy || profiles.length === 0}>
                 {vm.actionBusy ? '应用中...' : '确认应用'}
               </button>
+              {vm.applyBusy && (
+                <button type="button" className="danger" onClick={() => void vm.onCancelApply()}>
+                  取消部署
+                </button>
+              )}
             </div>
           </div>
         </div>

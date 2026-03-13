@@ -1,11 +1,15 @@
 import type {
   ApplyServerProxyNodeRequest,
+  CancelServerProxyApplyRequest,
   DeleteServerProxyConfigRequest,
+  GetServerProxyRuntimeConfigRequest,
   GetServerProxyRuntimeStatusRequest,
   ListServerProxyConfigsRequest,
   ServerProxyApplyResult,
+  ServerProxyCancelResult,
   ServerProxyConfig,
   ServerProxyConnectivityResult,
+  ServerProxyRuntimeConfigResult,
   ServerProxyRuntimeStatusResult,
   SyncServerProxySubscriptionRequest,
   TestServerProxyConnectivityRequest
@@ -41,6 +45,20 @@ export function testServerProxyConnectivity(request: TestServerProxyConnectivity
 export function getServerProxyRuntimeStatus(request: GetServerProxyRuntimeStatusRequest) {
   return invokeTauriWithRequest<ServerProxyRuntimeStatusResult, GetServerProxyRuntimeStatusRequest>(
     'get_server_proxy_runtime_status',
+    request
+  );
+}
+
+export function getServerProxyRuntimeConfig(request: GetServerProxyRuntimeConfigRequest) {
+  return invokeTauriWithRequest<ServerProxyRuntimeConfigResult, GetServerProxyRuntimeConfigRequest>(
+    'get_server_proxy_runtime_config',
+    request
+  );
+}
+
+export function cancelServerProxyApply(request: CancelServerProxyApplyRequest) {
+  return invokeTauriWithRequest<ServerProxyCancelResult, CancelServerProxyApplyRequest>(
+    'cancel_server_proxy_apply',
     request
   );
 }

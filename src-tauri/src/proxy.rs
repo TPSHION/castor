@@ -1,9 +1,9 @@
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -83,7 +83,19 @@ pub struct ApplyServerProxyNodeRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct CancelServerProxyApplyRequest {
+    pub apply_id: String,
+    pub profile_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct GetServerProxyRuntimeStatusRequest {
+    pub profile_id: String,
+    pub use_sudo: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GetServerProxyRuntimeConfigRequest {
     pub profile_id: String,
     pub use_sudo: Option<bool>,
 }
@@ -97,6 +109,16 @@ pub struct TestServerProxyConnectivityRequest {
 #[derive(Debug, Serialize)]
 pub struct ServerProxyApplyResult {
     pub config: ServerProxyConfig,
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_status: i32,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServerProxyCancelResult {
+    pub apply_id: String,
     pub success: bool,
     pub stdout: String,
     pub stderr: String,
@@ -124,6 +146,51 @@ pub struct ServerProxyRuntimeStatusResult {
     pub message: String,
     pub stdout: String,
     pub stderr: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServerProxyRuntimeConfigResult {
+    pub profile_id: String,
+    pub service_name: String,
+    pub config_path: String,
+    pub installed: bool,
+    pub active: bool,
+    pub enabled: bool,
+    pub config_exists: bool,
+    pub checked_at: u64,
+    pub message: String,
+    pub raw_config: Option<String>,
+    pub parse_error: Option<String>,
+    pub summary: Option<ServerProxyRuntimeConfigSummary>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServerProxyRuntimeConfigSummary {
+    pub inbound_count: usize,
+    pub outbound_count: usize,
+    pub route_final: Option<String>,
+    pub route_rule_count: usize,
+    pub dns_server_count: usize,
+    pub inbounds: Vec<ServerProxyRuntimeInboundSummary>,
+    pub outbounds: Vec<ServerProxyRuntimeOutboundSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServerProxyRuntimeInboundSummary {
+    pub tag: Option<String>,
+    pub r#type: String,
+    pub listen: Option<String>,
+    pub listen_port: Option<u16>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServerProxyRuntimeOutboundSummary {
+    pub tag: Option<String>,
+    pub r#type: String,
+    pub server: Option<String>,
+    pub server_port: Option<u16>,
 }
 
 #[derive(Debug, Serialize)]
@@ -275,6 +342,7 @@ pub fn apply_server_proxy_node(
         })
         .ok_or_else(|| "profile_id is required when applying proxy node".to_string())?;
     config.profile_id = target_profile_id.clone();
+    let _running_guard = RunningProxyApplyGuard::new(apply_id.clone(), target_profile_id.clone())?;
     let node = config
         .nodes
         .iter()
@@ -312,7 +380,30 @@ pub fn apply_server_proxy_node(
         .local_mixed_port
         .unwrap_or(DEFAULT_PROXY_MIXED_PORT)
         .clamp(1024, 65535);
-    let script = build_apply_proxy_script(&node, use_sudo, local_mixed_port)?;
+    let preuploaded_archive = prepare_remote_sing_box_archive(app, &mut session, &apply_id)
+        .map_err(|err| format!("failed to prepare local sing-box package: {err}"))?;
+    if let Some(path) = preuploaded_archive.as_deref() {
+        push_proxy_apply_log(
+            app,
+            &apply_id,
+            "info",
+            format!("已准备本地安装包，远程路径：{path}"),
+        );
+    } else {
+        push_proxy_apply_log(
+            app,
+            &apply_id,
+            "warn",
+            "未匹配到本地安装包，将回退在线下载 sing-box。",
+        );
+    }
+    let script = build_apply_proxy_script(
+        &node,
+        use_sudo,
+        local_mixed_port,
+        &apply_id,
+        preuploaded_archive.as_deref(),
+    )?;
     push_proxy_apply_log(
         app,
         &apply_id,
@@ -328,6 +419,10 @@ pub fn apply_server_proxy_node(
             if normalized.is_empty() {
                 return;
             }
+            if normalized == "__CASTOR_PROXY_CANCELED=1" {
+                push_proxy_apply_log(app, &apply_id, "warn", "收到取消指令，正在终止代理部署。");
+                return;
+            }
             let level = if normalized.contains("failed")
                 || normalized.contains("error")
                 || normalized.contains("ERROR")
@@ -339,6 +434,25 @@ pub fn apply_server_proxy_node(
             push_proxy_apply_log(app, &apply_id, level, normalized.to_string());
         })?;
     let stderr = String::new();
+    let canceled = exit_status == 130
+        || stdout
+            .lines()
+            .any(|line| line.trim() == "__CASTOR_PROXY_CANCELED=1");
+
+    if canceled {
+        config.status = "pending".to_string();
+        config.updated_at = now_unix();
+        update_server_proxy_config(app, &config)?;
+        push_proxy_apply_log(app, &apply_id, "done", "代理部署已取消。");
+        return Ok(ServerProxyApplyResult {
+            config,
+            success: false,
+            stdout,
+            stderr,
+            exit_status,
+            message: "已取消代理部署。".to_string(),
+        });
+    }
 
     if exit_status != 0 {
         config.status = "failed".to_string();
@@ -374,6 +488,43 @@ pub fn apply_server_proxy_node(
         message: format!(
             "代理节点已应用，远程本地代理地址：http://127.0.0.1:{local_mixed_port} / socks5://127.0.0.1:{local_mixed_port}"
         ),
+    })
+}
+
+pub fn cancel_server_proxy_apply(
+    app: &AppHandle,
+    request: CancelServerProxyApplyRequest,
+) -> Result<ServerProxyCancelResult, String> {
+    let apply_id = request.apply_id.trim();
+    if apply_id.is_empty() {
+        return Err("apply_id is required".to_string());
+    }
+
+    let profile_id = request
+        .profile_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| resolve_running_proxy_apply_profile_id(apply_id))
+        .ok_or_else(|| "profile_id is required to cancel apply".to_string())?;
+
+    let profile = find_profile(app, &profile_id)?;
+    let mut session = connect_ssh_profile(&profile)?;
+    let script = build_cancel_apply_script(apply_id);
+    let (stdout, stderr, exit_status) = run_remote_script(&mut session, &script)?;
+    let success = exit_status == 0;
+    Ok(ServerProxyCancelResult {
+        apply_id: apply_id.to_string(),
+        success,
+        stdout,
+        stderr,
+        exit_status,
+        message: if success {
+            "取消请求已发送，等待当前步骤安全终止。".to_string()
+        } else {
+            "发送取消请求失败，请检查日志。".to_string()
+        },
     })
 }
 
@@ -463,6 +614,77 @@ pub fn get_server_proxy_runtime_status(
         checked_at: now_unix(),
         message,
         stdout,
+        stderr,
+    })
+}
+
+pub fn get_server_proxy_runtime_config(
+    app: &AppHandle,
+    request: GetServerProxyRuntimeConfigRequest,
+) -> Result<ServerProxyRuntimeConfigResult, String> {
+    let profile_id = request.profile_id.trim();
+    if profile_id.is_empty() {
+        return Err("profile_id is required".to_string());
+    }
+
+    let profile = find_profile(app, profile_id)?;
+    let mut session = connect_ssh_profile(&profile)?;
+    let use_sudo = request.use_sudo.unwrap_or(true);
+    let script = build_runtime_config_script(use_sudo);
+    let (stdout, stderr, exit_status) = run_remote_script(&mut session, &script)?;
+    let parsed = parse_runtime_config_markers(&stdout);
+
+    let installed = parsed.installed.unwrap_or(false);
+    let active = parsed.active.unwrap_or(false);
+    let enabled = parsed.enabled.unwrap_or(false);
+    let config_exists = parsed.config_exists.unwrap_or(false);
+    let config_path = parsed
+        .config_path
+        .unwrap_or_else(|| "/etc/castor/proxy/config.json".to_string());
+
+    let mut parse_error = None;
+    let summary = match parsed.raw_config.as_deref() {
+        Some(raw_config) => match build_runtime_config_summary(raw_config) {
+            Ok(summary) => Some(summary),
+            Err(err) => {
+                parse_error = Some(err);
+                None
+            }
+        },
+        None => None,
+    };
+    if let Some(read_error) = parsed.read_error {
+        let detail = format!("读取远程配置失败，退出码：{read_error}");
+        parse_error = Some(match parse_error {
+            Some(existing) => format!("{existing}；{detail}"),
+            None => detail,
+        });
+    }
+
+    let message = if exit_status != 0 {
+        "远程代理配置查询失败，请检查日志。".to_string()
+    } else if !config_exists {
+        "远程服务器尚未生成 sing-box 配置文件。".to_string()
+    } else if parse_error.is_some() {
+        "已读取远程配置文件，但解析失败，请检查原始配置。".to_string()
+    } else {
+        "已成功读取远程 sing-box 配置。".to_string()
+    };
+
+    Ok(ServerProxyRuntimeConfigResult {
+        profile_id: profile_id.to_string(),
+        service_name: "castor-proxy.service".to_string(),
+        config_path,
+        installed,
+        active,
+        enabled,
+        config_exists,
+        checked_at: now_unix(),
+        message,
+        raw_config: parsed.raw_config,
+        parse_error,
+        summary,
+        stdout: parsed.stdout_without_config,
         stderr,
     })
 }
@@ -970,10 +1192,170 @@ fn proxy_node_id(source: &str) -> String {
     format!("node-{:x}", hasher.finish())
 }
 
+fn prepare_remote_sing_box_archive(
+    app: &AppHandle,
+    session: &mut Session,
+    apply_id: &str,
+) -> Result<Option<String>, String> {
+    let arch = match detect_remote_arch(session) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    let local_package = match find_local_sing_box_package(app, &arch) {
+        Some(path) => path,
+        None => return Ok(None),
+    };
+    let short_apply_id = short_id(&sanitize_file_id(apply_id), 12);
+    let remote_path = format!("/tmp/castor-sing-box-{arch}-{short_apply_id}.tar.gz");
+    upload_file_to_remote(session, &local_package, &remote_path)?;
+    Ok(Some(remote_path))
+}
+
+fn detect_remote_arch(session: &mut Session) -> Result<String, String> {
+    let (stdout, stderr, exit_status) = run_remote_script(session, "uname -m\n")?;
+    if exit_status != 0 {
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        return Err(format!(
+            "failed to detect remote arch (exit {exit_status}): {detail}"
+        ));
+    }
+
+    let raw_arch = stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default();
+    match raw_arch {
+        "x86_64" | "amd64" => Ok("amd64".to_string()),
+        "aarch64" | "arm64" => Ok("arm64".to_string()),
+        value => Err(format!("unsupported remote architecture: {value}")),
+    }
+}
+
+fn find_local_sing_box_package(app: &AppHandle, arch: &str) -> Option<PathBuf> {
+    let suffix = format!("linux-{arch}.tar.gz");
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        roots.push(resource_dir.join("proxy-packages"));
+    }
+    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/proxy-packages"));
+    if let Ok(current_dir) = std::env::current_dir() {
+        roots.push(current_dir.join("src-tauri/resources/proxy-packages"));
+    }
+
+    for root in roots {
+        let entries = match fs::read_dir(&root) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        let mut candidates: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.starts_with("sing-box-") && name.ends_with(&suffix))
+                    .unwrap_or(false)
+            })
+            .collect();
+        if candidates.is_empty() {
+            continue;
+        }
+        candidates.sort_by(|left, right| {
+            let left_name = left
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            let right_name = right
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            right_name.cmp(left_name)
+        });
+        return candidates.into_iter().next();
+    }
+    None
+}
+
+fn upload_file_to_remote(
+    session: &mut Session,
+    local_path: &Path,
+    remote_path: &str,
+) -> Result<(), String> {
+    let metadata = fs::metadata(local_path)
+        .map_err(|err| format!("failed to read local package metadata: {err}"))?;
+    if !metadata.is_file() {
+        return Err("local package path is not a file".to_string());
+    }
+    let mut local_file =
+        fs::File::open(local_path).map_err(|err| format!("failed to open local package: {err}"))?;
+    let mut remote_file = session
+        .scp_send(Path::new(remote_path), 0o644, metadata.len(), None)
+        .map_err(|err| format!("failed to open remote upload stream: {err}"))?;
+    std::io::copy(&mut local_file, &mut remote_file)
+        .map_err(|err| format!("failed to upload local package: {err}"))?;
+    remote_file
+        .flush()
+        .map_err(|err| format!("failed to flush remote upload stream: {err}"))?;
+    drop(remote_file);
+
+    let verify_script = format!(
+        "set -e\nTARGET={}\nif [ ! -f \"$TARGET\" ]; then\n  echo \"__CASTOR_UPLOAD_SIZE=-1\"\n  exit 9\nfi\nSIZE=$(wc -c < \"$TARGET\" | tr -d '[:space:]')\necho \"__CASTOR_UPLOAD_SIZE=$SIZE\"\n",
+        shell_quote(remote_path)
+    );
+    let (verify_stdout, verify_stderr, verify_status) = run_remote_script(session, &verify_script)?;
+    if verify_status != 0 {
+        let detail = if verify_stderr.trim().is_empty() {
+            verify_stdout.trim()
+        } else {
+            verify_stderr.trim()
+        };
+        return Err(format!(
+            "remote upload verification failed (exit {verify_status}): {detail}"
+        ));
+    }
+    let remote_size = verify_stdout
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("__CASTOR_UPLOAD_SIZE="))
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .ok_or_else(|| "failed to parse remote upload size marker".to_string())?;
+    if remote_size != metadata.len() {
+        return Err(format!(
+            "remote upload size mismatch: local={} remote={remote_size}",
+            metadata.len()
+        ));
+    }
+    Ok(())
+}
+
+fn sanitize_file_id(source: &str) -> String {
+    source
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn short_id(source: &str, max_len: usize) -> String {
+    source.chars().take(max_len).collect()
+}
+
 fn build_apply_proxy_script(
     node: &ProxyNode,
     use_sudo: bool,
     local_mixed_port: u16,
+    apply_id: &str,
+    preuploaded_archive: Option<&str>,
 ) -> Result<String, String> {
     let config_json = serde_json::to_string_pretty(&json!({
         "log": {
@@ -1027,7 +1409,16 @@ WantedBy=multi-user.target
 
     let mut script = String::new();
     script.push_str("set -e\n");
+    script.push_str(&format!("APPLY_ID={}\n", shell_quote(apply_id)));
+    script.push_str(&format!(
+        "PREUPLOADED_ARCHIVE={}\n",
+        shell_quote(preuploaded_archive.unwrap_or(""))
+    ));
+    script.push_str("CANCEL_FILE=\"/tmp/castor-proxy-apply-${APPLY_ID}.cancel\"\n");
+    script.push_str("check_cancel(){ if [ -f \"$CANCEL_FILE\" ]; then echo \"__CASTOR_PROXY_CANCELED=1\"; rm -f \"$CANCEL_FILE\" >/dev/null 2>&1 || true; exit 130; fi }\n");
+    script.push_str("rm -f \"$CANCEL_FILE\" >/dev/null 2>&1 || true\n");
     script.push_str("echo \"[1/5] 准备权限与执行环境\"\n");
+    script.push_str("check_cancel\n");
     script.push_str(&format!(
         "CASTOR_USE_SUDO={}\n",
         if use_sudo { "1" } else { "0" }
@@ -1044,6 +1435,7 @@ WantedBy=multi-user.target
     script
         .push_str("run_as_root(){ if [ -n \"$SUDO\" ]; then \"$SUDO\" \"$@\"; else \"$@\"; fi }\n");
     script.push_str("echo \"[2/5] 检查并安装 sing-box\"\n");
+    script.push_str("check_cancel\n");
     script.push_str("if ! command -v sing-box >/dev/null 2>&1; then\n");
     script.push_str("  ARCH_RAW=\"$(uname -m)\"\n");
     script.push_str("  case \"$ARCH_RAW\" in\n");
@@ -1055,7 +1447,11 @@ WantedBy=multi-user.target
     script.push_str("  URL=\"https://github.com/SagerNet/sing-box/releases/download/v${VERSION}/sing-box-${VERSION}-linux-${ARCH}.tar.gz\"\n");
     script.push_str("  TMP_DIR=\"$(mktemp -d)\"\n");
     script.push_str("  ARCHIVE_PATH=\"$TMP_DIR/sing-box.tar.gz\"\n");
-    script.push_str("  if command -v curl >/dev/null 2>&1; then\n");
+    script.push_str(
+        "  if [ -n \"$PREUPLOADED_ARCHIVE\" ] && [ -f \"$PREUPLOADED_ARCHIVE\" ]; then\n",
+    );
+    script.push_str("    cp \"$PREUPLOADED_ARCHIVE\" \"$ARCHIVE_PATH\"\n");
+    script.push_str("  elif command -v curl >/dev/null 2>&1; then\n");
     script.push_str("    curl -fL \"$URL\" -o \"$ARCHIVE_PATH\"\n");
     script.push_str("  elif command -v wget >/dev/null 2>&1; then\n");
     script.push_str("    wget -qO \"$ARCHIVE_PATH\" \"$URL\"\n");
@@ -1074,7 +1470,9 @@ WantedBy=multi-user.target
     script.push_str("  run_as_root install -m 0755 \"$BIN_PATH\" /usr/local/bin/sing-box\n");
     script.push_str("  rm -rf \"$TMP_DIR\"\n");
     script.push_str("fi\n");
+    script.push_str("if [ -n \"$PREUPLOADED_ARCHIVE\" ]; then run_as_root rm -f \"$PREUPLOADED_ARCHIVE\" >/dev/null 2>&1 || true; fi\n");
     script.push_str("echo \"[3/5] 写入代理配置与服务文件\"\n");
+    script.push_str("check_cancel\n");
     script.push_str("run_as_root mkdir -p /etc/castor/proxy\n");
     script.push_str("TMP_CONFIG=\"$(mktemp)\"\n");
     script.push_str("cat > \"$TMP_CONFIG\" <<'CASTOR_PROXY_CONFIG_EOF'\n");
@@ -1092,11 +1490,14 @@ WantedBy=multi-user.target
     );
     script.push_str("rm -f \"$TMP_UNIT\"\n");
     script.push_str("echo \"[4/5] 重载并重启代理服务\"\n");
+    script.push_str("check_cancel\n");
     script.push_str("run_as_root systemctl daemon-reload\n");
     script.push_str("run_as_root systemctl enable castor-proxy.service >/dev/null 2>&1 || true\n");
     script.push_str("run_as_root systemctl restart castor-proxy.service\n");
     script.push_str("echo \"[5/5] 校验代理服务状态\"\n");
+    script.push_str("check_cancel\n");
     script.push_str("run_as_root systemctl is-active castor-proxy.service\n");
+    script.push_str("rm -f \"$CANCEL_FILE\" >/dev/null 2>&1 || true\n");
     script.push_str(&format!(
         "echo \"__CASTOR_PROXY_HTTP=http://127.0.0.1:{}\"\n",
         local_mixed_port
@@ -1106,6 +1507,16 @@ WantedBy=multi-user.target
         local_mixed_port
     ));
     Ok(script)
+}
+
+fn build_cancel_apply_script(apply_id: &str) -> String {
+    let mut script = String::new();
+    script.push_str("set -e\n");
+    script.push_str(&format!("APPLY_ID={}\n", shell_quote(apply_id)));
+    script.push_str("CANCEL_FILE=\"/tmp/castor-proxy-apply-${APPLY_ID}.cancel\"\n");
+    script.push_str("touch \"$CANCEL_FILE\"\n");
+    script.push_str("echo \"__CASTOR_PROXY_CANCEL_SENT=1\"\n");
+    script
 }
 
 fn build_runtime_status_script(use_sudo: bool) -> String {
@@ -1142,12 +1553,68 @@ fn build_runtime_status_script(use_sudo: bool) -> String {
     script
 }
 
+fn build_runtime_config_script(use_sudo: bool) -> String {
+    let mut script = String::new();
+    script.push_str("set +e\n");
+    script.push_str(&format!(
+        "CASTOR_USE_SUDO={}\n",
+        if use_sudo { "1" } else { "0" }
+    ));
+    script.push_str("SUDO=\"\"\n");
+    script.push_str("if [ \"$CASTOR_USE_SUDO\" = \"1\" ] && [ \"$(id -u)\" -ne 0 ]; then\n");
+    script.push_str("  if command -v sudo >/dev/null 2>&1; then\n");
+    script.push_str("    SUDO=\"sudo\"\n");
+    script.push_str("  fi\n");
+    script.push_str("fi\n");
+    script
+        .push_str("run_as_root(){ if [ -n \"$SUDO\" ]; then \"$SUDO\" \"$@\"; else \"$@\"; fi }\n");
+    script.push_str("CONFIG_PATH=\"/etc/castor/proxy/config.json\"\n");
+    script.push_str("INSTALLED=0\n");
+    script.push_str("if command -v sing-box >/dev/null 2>&1; then INSTALLED=1; fi\n");
+    script.push_str("CONFIG_EXISTS=0\n");
+    script.push_str("if [ -f \"$CONFIG_PATH\" ]; then CONFIG_EXISTS=1; fi\n");
+    script.push_str("ACTIVE=0\n");
+    script.push_str("ENABLED=0\n");
+    script.push_str("if command -v systemctl >/dev/null 2>&1; then\n");
+    script.push_str("  run_as_root systemctl is-active castor-proxy.service >/dev/null 2>&1\n");
+    script.push_str("  if [ \"$?\" -eq 0 ]; then ACTIVE=1; fi\n");
+    script.push_str("  run_as_root systemctl is-enabled castor-proxy.service >/dev/null 2>&1\n");
+    script.push_str("  if [ \"$?\" -eq 0 ]; then ENABLED=1; fi\n");
+    script.push_str("fi\n");
+    script.push_str("echo \"__CASTOR_PROXY_CONFIG__INSTALLED=$INSTALLED\"\n");
+    script.push_str("echo \"__CASTOR_PROXY_CONFIG__CONFIG_EXISTS=$CONFIG_EXISTS\"\n");
+    script.push_str("echo \"__CASTOR_PROXY_CONFIG__ACTIVE=$ACTIVE\"\n");
+    script.push_str("echo \"__CASTOR_PROXY_CONFIG__ENABLED=$ENABLED\"\n");
+    script.push_str("echo \"__CASTOR_PROXY_CONFIG__PATH=$CONFIG_PATH\"\n");
+    script.push_str("if [ \"$CONFIG_EXISTS\" = \"1\" ]; then\n");
+    script.push_str("  echo \"__CASTOR_PROXY_CONFIG__BEGIN\"\n");
+    script.push_str("  run_as_root cat \"$CONFIG_PATH\"\n");
+    script.push_str("  READ_STATUS=$?\n");
+    script.push_str("  echo \"__CASTOR_PROXY_CONFIG__END\"\n");
+    script.push_str("  echo \"__CASTOR_PROXY_CONFIG__READ_STATUS=$READ_STATUS\"\n");
+    script.push_str("fi\n");
+    script.push_str("exit 0\n");
+    script
+}
+
 #[derive(Default)]
 struct RuntimeStatusMarkers {
     installed: Option<bool>,
     active: Option<bool>,
     enabled: Option<bool>,
     config_exists: Option<bool>,
+}
+
+#[derive(Default)]
+struct RuntimeConfigMarkers {
+    installed: Option<bool>,
+    active: Option<bool>,
+    enabled: Option<bool>,
+    config_exists: Option<bool>,
+    config_path: Option<String>,
+    read_error: Option<i32>,
+    raw_config: Option<String>,
+    stdout_without_config: String,
 }
 
 fn parse_runtime_status_markers(stdout: &str) -> RuntimeStatusMarkers {
@@ -1174,11 +1641,169 @@ fn parse_runtime_status_markers(stdout: &str) -> RuntimeStatusMarkers {
     markers
 }
 
+fn parse_runtime_config_markers(stdout: &str) -> RuntimeConfigMarkers {
+    let mut markers = RuntimeConfigMarkers::default();
+    let mut in_config = false;
+    let mut config_lines: Vec<String> = Vec::new();
+    let mut plain_lines: Vec<String> = Vec::new();
+
+    for raw_line in stdout.lines() {
+        let line = raw_line.trim();
+        if line == "__CASTOR_PROXY_CONFIG__BEGIN" {
+            in_config = true;
+            continue;
+        }
+        if line == "__CASTOR_PROXY_CONFIG__END" {
+            in_config = false;
+            continue;
+        }
+        if in_config {
+            config_lines.push(raw_line.to_string());
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_PROXY_CONFIG__INSTALLED=") {
+            markers.installed = parse_marker_bool(value);
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_PROXY_CONFIG__CONFIG_EXISTS=") {
+            markers.config_exists = parse_marker_bool(value);
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_PROXY_CONFIG__ACTIVE=") {
+            markers.active = parse_marker_bool(value);
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_PROXY_CONFIG__ENABLED=") {
+            markers.enabled = parse_marker_bool(value);
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_PROXY_CONFIG__PATH=") {
+            markers.config_path = Some(value.trim().to_string());
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("__CASTOR_PROXY_CONFIG__READ_STATUS=") {
+            if let Ok(status) = value.trim().parse::<i32>() {
+                if status != 0 {
+                    markers.read_error = Some(status);
+                }
+            }
+            continue;
+        }
+        plain_lines.push(raw_line.to_string());
+    }
+
+    if !config_lines.is_empty() {
+        markers.raw_config = Some(config_lines.join("\n"));
+    }
+    markers.stdout_without_config = plain_lines.join("\n");
+    markers
+}
+
+fn build_runtime_config_summary(
+    raw_config: &str,
+) -> Result<ServerProxyRuntimeConfigSummary, String> {
+    let root: Value =
+        serde_json::from_str(raw_config).map_err(|err| format!("配置 JSON 解析失败: {err}"))?;
+    let inbounds = root
+        .get("inbounds")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| ServerProxyRuntimeInboundSummary {
+                    tag: item
+                        .get("tag")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                    r#type: item
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    listen: item
+                        .get("listen")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                    listen_port: item
+                        .get("listen_port")
+                        .and_then(|value| value.as_u64())
+                        .and_then(|value| u16::try_from(value).ok()),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let outbounds = root
+        .get("outbounds")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| ServerProxyRuntimeOutboundSummary {
+                    tag: item
+                        .get("tag")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                    r#type: item
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    server: item
+                        .get("server")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                    server_port: item
+                        .get("server_port")
+                        .and_then(|value| value.as_u64())
+                        .and_then(|value| u16::try_from(value).ok()),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let route_final = root
+        .get("route")
+        .and_then(|value| value.get("final"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let route_rule_count = root
+        .get("route")
+        .and_then(|value| value.get("rules"))
+        .and_then(Value::as_array)
+        .map(|items| items.len())
+        .unwrap_or(0);
+    let dns_server_count = root
+        .get("dns")
+        .and_then(|value| value.get("servers"))
+        .and_then(Value::as_array)
+        .map(|items| items.len())
+        .unwrap_or(0);
+
+    Ok(ServerProxyRuntimeConfigSummary {
+        inbound_count: inbounds.len(),
+        outbound_count: outbounds.len(),
+        route_final,
+        route_rule_count,
+        dns_server_count,
+        inbounds,
+        outbounds,
+    })
+}
+
 fn parse_marker_bool(value: &str) -> Option<bool> {
     match value.trim() {
         "1" | "true" | "TRUE" | "yes" | "YES" => Some(true),
         "0" | "false" | "FALSE" | "no" | "NO" => Some(false),
         _ => None,
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        "''".to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
     }
 }
 
@@ -1417,6 +2042,49 @@ fn server_proxy_configs_file_path(app: &AppHandle) -> Result<PathBuf, String> {
     fs::create_dir_all(&config_dir)
         .map_err(|err| format!("failed to initialize app config dir: {err}"))?;
     Ok(config_dir.join("server_proxy_configs.json"))
+}
+
+struct RunningProxyApplyGuard {
+    apply_id: String,
+}
+
+impl RunningProxyApplyGuard {
+    fn new(apply_id: String, profile_id: String) -> Result<Self, String> {
+        register_running_proxy_apply(&apply_id, &profile_id)?;
+        Ok(Self { apply_id })
+    }
+}
+
+impl Drop for RunningProxyApplyGuard {
+    fn drop(&mut self) {
+        let _ = remove_running_proxy_apply(&self.apply_id);
+    }
+}
+
+fn running_proxy_apply_store() -> &'static Mutex<HashMap<String, String>> {
+    static STORE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_running_proxy_apply(apply_id: &str, profile_id: &str) -> Result<(), String> {
+    let mut store = running_proxy_apply_store()
+        .lock()
+        .map_err(|_| "proxy apply store lock poisoned".to_string())?;
+    store.insert(apply_id.to_string(), profile_id.to_string());
+    Ok(())
+}
+
+fn remove_running_proxy_apply(apply_id: &str) -> Result<(), String> {
+    let mut store = running_proxy_apply_store()
+        .lock()
+        .map_err(|_| "proxy apply store lock poisoned".to_string())?;
+    store.remove(apply_id);
+    Ok(())
+}
+
+fn resolve_running_proxy_apply_profile_id(apply_id: &str) -> Option<String> {
+    let store = running_proxy_apply_store().lock().ok()?;
+    store.get(apply_id).cloned()
 }
 
 fn default_connectivity_timeout_ms() -> u64 {

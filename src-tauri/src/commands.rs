@@ -56,15 +56,19 @@ use crate::profiles::{
 };
 use crate::proxy::{
     apply_server_proxy_node as apply_server_proxy_node_impl,
+    cancel_server_proxy_apply as cancel_server_proxy_apply_impl,
     delete_server_proxy_config as delete_server_proxy_config_impl,
+    get_server_proxy_runtime_config as get_server_proxy_runtime_config_impl,
     get_server_proxy_runtime_status as get_server_proxy_runtime_status_impl,
     list_server_proxy_configs as list_server_proxy_configs_impl,
     sync_server_proxy_subscription as sync_server_proxy_subscription_impl,
     test_server_proxy_connectivity as test_server_proxy_connectivity_impl,
-    ApplyServerProxyNodeRequest, DeleteServerProxyConfigRequest,
-    GetServerProxyRuntimeStatusRequest, ListServerProxyConfigsRequest, ServerProxyApplyResult,
-    ServerProxyConfig, ServerProxyConnectivityResult, ServerProxyRuntimeStatusResult,
-    SyncServerProxySubscriptionRequest, TestServerProxyConnectivityRequest,
+    ApplyServerProxyNodeRequest, CancelServerProxyApplyRequest, DeleteServerProxyConfigRequest,
+    GetServerProxyRuntimeConfigRequest, GetServerProxyRuntimeStatusRequest,
+    ListServerProxyConfigsRequest, ServerProxyApplyResult, ServerProxyCancelResult,
+    ServerProxyConfig, ServerProxyConnectivityResult, ServerProxyRuntimeConfigResult,
+    ServerProxyRuntimeStatusResult, SyncServerProxySubscriptionRequest,
+    TestServerProxyConnectivityRequest,
 };
 use crate::runtime::{
     cancel_server_runtime_probe as cancel_server_runtime_probe_impl,
@@ -311,6 +315,32 @@ pub async fn get_server_proxy_runtime_status(
     })
     .await
     .map_err(|err| format!("failed to join get server proxy runtime status task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn get_server_proxy_runtime_config(
+    app: AppHandle,
+    request: GetServerProxyRuntimeConfigRequest,
+) -> Result<ServerProxyRuntimeConfigResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        get_server_proxy_runtime_config_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join get server proxy runtime config task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn cancel_server_proxy_apply(
+    app: AppHandle,
+    request: CancelServerProxyApplyRequest,
+) -> Result<ServerProxyCancelResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        cancel_server_proxy_apply_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join cancel server proxy apply task: {err}"))?
 }
 
 #[tauri::command]
