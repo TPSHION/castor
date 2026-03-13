@@ -33,8 +33,6 @@ jobs:
       APPLE_API_KEY: M4PXT78BFC
       APPLE_API_ISSUER: 283a2b54-c0ae-4199-87ef-ee952625f716
       APPLE_TEAM_ID: 4B7HL75P84
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
 
     steps:
@@ -67,9 +65,22 @@ jobs:
       - name: Validate signing secrets
         shell: bash
         run: |
-          test -n "$APPLE_CERTIFICATE" || (echo "::error::Missing secret APPLE_CERTIFICATE" && exit 1)
-          test -n "$APPLE_CERTIFICATE_PASSWORD" || (echo "::error::Missing secret APPLE_CERTIFICATE_PASSWORD" && exit 1)
+          test -n "${{ secrets.APPLE_CERTIFICATE }}" || (echo "::error::Missing secret APPLE_CERTIFICATE" && exit 1)
+          test -n "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" || (echo "::error::Missing secret APPLE_CERTIFICATE_PASSWORD" && exit 1)
           test -n "$APPLE_API_KEY_P8" || (echo "::error::Missing secret APPLE_API_KEY_P8" && exit 1)
+
+      - name: Import code-signing certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Detect signing identity
+        shell: bash
+        run: |
+          IDENTITY=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -n1)
+          test -n "$IDENTITY" || (echo "::error::Developer ID Application identity not found in keychain" && exit 1)
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
 
       - name: Set App Store Connect key path
         shell: bash
@@ -78,8 +89,8 @@ jobs:
       - name: Prepare App Store Connect API key file
         shell: bash
         run: |
-          echo "$APPLE_API_KEY_P8" | base64 --decode > "$APPLE_API_KEY_PATH" 2>/dev/null || \
-          echo "$APPLE_API_KEY_P8" | base64 -D > "$APPLE_API_KEY_PATH"
+          printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$APPLE_API_KEY_PATH" 2>/dev/null || \
+          printf '%s' "$APPLE_API_KEY_P8" | base64 -D > "$APPLE_API_KEY_PATH"
           chmod 600 "$APPLE_API_KEY_PATH"
 
       - name: Install dependencies
