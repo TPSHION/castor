@@ -249,7 +249,7 @@ export function EnvironmentMihomoPanel({ profiles }: { profiles: ConnectionProfi
     <section className="environment-proxy-page">
       <div className="environment-proxy-page-body">
         <div className="section-header environment-proxy-header">
-          <h2>{activePage === 'nodes' ? '远程代理管理' : '部署代理'}</h2>
+          <h2>{activePage === 'nodes' ? '远程代理管理' : '代理配置'}</h2>
           <div className="section-actions">
             {activePage === 'nodes' ? (
               <>
@@ -275,7 +275,7 @@ export function EnvironmentMihomoPanel({ profiles }: { profiles: ConnectionProfi
             <section className="host-card environment-proxy-card">
               <header className="host-card-header">
                 <div>
-                  <h3>部署代理</h3>
+                  <h3>代理配置</h3>
                   <p>选择订阅节点后，部署到目标服务器，并可查看远程状态。</p>
                 </div>
                 <span className="chip">Mihomo</span>
@@ -584,7 +584,7 @@ export function EnvironmentMihomoPanel({ profiles }: { profiles: ConnectionProfi
                   onClick={() => setActivePage('deploy')}
                   disabled={vm.actionBusy || !selectedConfig || supportedNodes.length === 0}
                 >
-                  部署代理
+                  代理配置
                 </button>
                 {selectedConfig && (
                   <button type="button" className="danger" onClick={() => setDeleteTarget(selectedConfig)} disabled={vm.actionBusy}>
@@ -598,7 +598,7 @@ export function EnvironmentMihomoPanel({ profiles }: { profiles: ConnectionProfi
               <header className="host-card-header">
                 <div>
                   <h3>节点列表</h3>
-                  <p>仅展示节点信息；部署请进入“部署代理”页面。</p>
+                  <p>仅展示节点信息；部署请进入“代理配置”页面。</p>
                 </div>
               </header>
 
