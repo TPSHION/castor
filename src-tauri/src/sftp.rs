@@ -522,7 +522,7 @@ pub fn download_file(
         )
     })?;
     let local_path = unique_local_path(&target_dir, &file_name);
-    let local_path_string = local_path.to_string_lossy().to_string();
+    let local_path_string = display_local_path(&local_path);
 
     let total_bytes = measure_remote_size(&sftp, &remote_path)?;
     let mut progress = TransferProgressEmitter::new(
@@ -578,7 +578,7 @@ pub fn upload_path(
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let cancel_token = register_transfer(&transfer_id);
     let _registration_guard = TransferRegistrationGuard::new(transfer_id.clone());
-    let local_path = PathBuf::from(request.local_path.trim());
+    let local_path = normalize_local_input_path(request.local_path.trim());
     if !local_path.exists() {
         return Err(format!(
             "local path does not exist: {}",
@@ -630,7 +630,7 @@ pub fn upload_path(
         app,
         transfer_id.clone(),
         "upload",
-        local_path.to_string_lossy().to_string(),
+        display_local_path(&local_path),
         remote_path.clone(),
         total_bytes,
     );
@@ -1219,7 +1219,7 @@ fn resolve_download_dir(path: Option<&str>) -> PathBuf {
     if let Some(value) = path {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
+            return normalize_local_input_path(trimmed);
         }
     }
 
@@ -1235,6 +1235,58 @@ fn resolve_download_dir(path: Option<&str>) -> PathBuf {
     default.push("Downloads");
     default.push("castor-sftp");
     default
+}
+
+fn normalize_local_input_path(value: &str) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let mut normalized = value.trim().to_string();
+        if let Some(stripped) = normalized.strip_prefix(r"\\?\UNC\") {
+            normalized = format!(r"\\{}", stripped);
+        } else if let Some(stripped) = normalized.strip_prefix(r"\\?\") {
+            normalized = stripped.to_string();
+        }
+
+        if is_windows_drive_only(normalized.as_str()) {
+            return PathBuf::from(format!("{normalized}\\"));
+        }
+
+        return PathBuf::from(normalized);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from(value)
+    }
+}
+
+fn display_local_path(path: &Path) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        let raw = path.to_string_lossy();
+        if let Some(stripped) = raw.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{}", stripped);
+        }
+        if let Some(stripped) = raw.strip_prefix(r"\\?\") {
+            return stripped.to_string();
+        }
+        raw.to_string()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_string_lossy().to_string()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_windows_drive_only(value: &str) -> bool {
+    value.len() == 2
+        && value.as_bytes()[1] == b':'
+        && value
+            .as_bytes()
+            .first()
+            .is_some_and(|ch| ch.is_ascii_alphabetic())
 }
 
 fn unique_local_path(dir: &Path, filename: &str) -> PathBuf {

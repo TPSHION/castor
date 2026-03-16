@@ -1,3 +1,4 @@
+@import './app/compat.css';
 @import './app/base.css';
 @import './app/servers.css';
 @import './app/sftp.css';

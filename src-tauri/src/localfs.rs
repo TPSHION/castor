@@ -73,7 +73,7 @@ pub fn list_local_dir(request: LocalListRequest) -> Result<LocalListResponse, St
 
             Some(LocalFsEntry {
                 name: file_name,
-                path: path.to_string_lossy().to_string(),
+                path: display_local_path(&path),
                 is_dir,
                 size,
                 modified,
@@ -88,7 +88,7 @@ pub fn list_local_dir(request: LocalListRequest) -> Result<LocalListResponse, St
     });
 
     Ok(LocalListResponse {
-        path: resolved.to_string_lossy().to_string(),
+        path: display_local_path(&resolved),
         parent_path: parent_path(&resolved),
         entries,
     })
@@ -154,7 +154,7 @@ fn resolve_local_path(path: Option<&str>) -> Result<PathBuf, String> {
         if trimmed.is_empty() {
             default_local_root()?
         } else {
-            PathBuf::from(trimmed)
+            normalize_local_input_path(trimmed)
         }
     } else {
         default_local_root()?
@@ -186,6 +186,57 @@ fn default_local_root() -> Result<PathBuf, String> {
 }
 
 fn parent_path(path: &Path) -> Option<String> {
-    path.parent()
-        .map(|parent| parent.to_string_lossy().to_string())
+    path.parent().map(display_local_path)
+}
+
+fn display_local_path(path: &Path) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        let raw = path.to_string_lossy();
+        if let Some(stripped) = raw.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{}", stripped);
+        }
+        if let Some(stripped) = raw.strip_prefix(r"\\?\") {
+            return stripped.to_string();
+        }
+        raw.to_string()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_string_lossy().to_string()
+    }
+}
+
+fn normalize_local_input_path(value: &str) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let mut normalized = value.trim().to_string();
+        if let Some(stripped) = normalized.strip_prefix(r"\\?\UNC\") {
+            normalized = format!(r"\\{}", stripped);
+        } else if let Some(stripped) = normalized.strip_prefix(r"\\?\") {
+            normalized = stripped.to_string();
+        }
+
+        if is_windows_drive_only(normalized.as_str()) {
+            return PathBuf::from(format!("{normalized}\\"));
+        }
+
+        return PathBuf::from(normalized);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from(value)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_windows_drive_only(value: &str) -> bool {
+    value.len() == 2
+        && value.as_bytes()[1] == b':'
+        && value
+            .as_bytes()
+            .first()
+            .is_some_and(|ch| ch.is_ascii_alphabetic())
 }

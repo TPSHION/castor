@@ -16,7 +16,7 @@
   --sftp-body-scrollbar-width: 0px;
   --mac-titlebar-left-inset: 86px;
   --mac-titlebar-top-offset: 2px;
-  font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  font-family: var(--font-sans);
 }
 
 * {
@@ -257,4 +257,3 @@ body.window-titlebar-overlay .header-functions {
 .workspace-page {
   height: 100%;
 }
-

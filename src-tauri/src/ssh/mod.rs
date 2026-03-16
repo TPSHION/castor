@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::net::TcpStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -486,7 +486,13 @@ fn connect_local_blocking(
         .session_id
         .clone()
         .ok_or_else(|| "session_id missing".to_string())?;
-    let shell = request.shell.unwrap_or_else(default_local_shell);
+    let shell = request
+        .shell
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(default_local_shell);
     let cols = request.cols.unwrap_or(120);
     let rows = request.rows.unwrap_or(40);
 
@@ -496,10 +502,8 @@ fn connect_local_blocking(
         .map_err(|err| format!("failed to create local pty: {err}"))?;
 
     let mut command = CommandBuilder::new(shell.clone());
-    if let Some(cwd) = request.cwd {
-        if !cwd.trim().is_empty() {
-            command.cwd(cwd);
-        }
+    if let Some(cwd) = resolve_local_cwd(request.cwd.as_deref()) {
+        command.cwd(cwd);
     }
 
     let mut child = pty_pair
@@ -635,11 +639,93 @@ fn to_pty_size(cols: u32, rows: u32) -> PtySize {
 }
 
 fn default_local_shell() -> String {
-    if cfg!(target_os = "windows") {
-        return "powershell.exe".to_string();
+    #[cfg(target_os = "windows")]
+    {
+        return default_windows_shell();
     }
 
     env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+}
+
+fn resolve_local_cwd(requested_cwd: Option<&str>) -> Option<PathBuf> {
+    let requested = requested_cwd
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    if requested.is_some() {
+        return requested;
+    }
+
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .or_else(|| env::current_dir().ok())
+}
+
+#[cfg(target_os = "windows")]
+fn default_windows_shell() -> String {
+    for candidate in ["pwsh.exe", "powershell.exe", "cmd.exe"] {
+        if windows_command_exists(candidate) {
+            return candidate.to_string();
+        }
+    }
+
+    if let Some(comspec) = env::var_os("COMSPEC")
+        .map(|value| value.to_string_lossy().trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return comspec;
+    }
+
+    "cmd.exe".to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn windows_command_exists(command: &str) -> bool {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let path = Path::new(trimmed);
+    if path.components().count() > 1 || path.extension().is_some() {
+        if path.is_file() {
+            return true;
+        }
+    }
+
+    let Some(path_value) = env::var_os("PATH") else {
+        return false;
+    };
+
+    let pathext = env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+    let extensions: Vec<String> = pathext
+        .split(';')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+        .collect();
+
+    let has_ext = path.extension().is_some();
+    for dir in env::split_paths(&path_value) {
+        if has_ext {
+            if dir.join(trimmed).is_file() {
+                return true;
+            }
+            continue;
+        }
+
+        if dir.join(trimmed).is_file() {
+            return true;
+        }
+        for ext in &extensions {
+            if dir.join(format!("{trimmed}{ext}")).is_file() {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 fn emit(app: &AppHandle, payload: OutputPayload) {
