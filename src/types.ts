@@ -581,8 +581,25 @@ export type ParseNginxServiceConfigRequest = {
   id: string;
 };
 
+export type ListNginxServiceConfigFilesRequest = {
+  id: string;
+};
+
+export type NginxServiceConfigFileEntry = {
+  source_path: string;
+  is_primary: boolean;
+};
+
+export type NginxServiceConfigFileListResult = {
+  id: string;
+  main_source_path: string;
+  files: NginxServiceConfigFileEntry[];
+  loaded_at: number;
+};
+
 export type ReadNginxServiceConfigFileRequest = {
   id: string;
+  source_path?: string;
 };
 
 export type NginxServiceConfigFileResult = {
@@ -595,6 +612,7 @@ export type NginxServiceConfigFileResult = {
 export type SaveNginxServiceConfigFileRequest = {
   id: string;
   content: string;
+  source_path?: string;
 };
 
 export type NginxServiceConfigFileSaveResult = {
@@ -607,6 +625,7 @@ export type NginxServiceConfigFileSaveResult = {
 export type ValidateNginxServiceConfigContentRequest = {
   id: string;
   content: string;
+  source_path?: string;
 };
 
 export type NginxConfigValidationResult = {

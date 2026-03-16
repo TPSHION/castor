@@ -7,6 +7,7 @@ import {
   discoverRemoteNginx,
   getNginxServiceStatus,
   importNginxServiceByParams,
+  listNginxServiceConfigFiles,
   listNginxServices,
   readNginxServiceConfigFile,
   saveNginxServiceConfigFile,
@@ -19,6 +20,7 @@ import type {
   ConnectionProfile,
   NginxControlAction,
   NginxConfigTestResult,
+  NginxServiceConfigFileEntry,
   NginxDeployLogPayload,
   NginxService,
   NginxServiceStatus
@@ -148,6 +150,8 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
   const [nginxConfigLoading, setNginxConfigLoading] = useState(false);
   const [nginxConfigSaving, setNginxConfigSaving] = useState(false);
   const [nginxConfigApplying, setNginxConfigApplying] = useState(false);
+  const [nginxConfigFilesLoading, setNginxConfigFilesLoading] = useState(false);
+  const [nginxConfigFiles, setNginxConfigFiles] = useState<NginxServiceConfigFileEntry[]>([]);
   const [nginxConfigSourcePath, setNginxConfigSourcePath] = useState('');
   const [nginxConfigContent, setNginxConfigContent] = useState('');
   const [nginxConfigOriginalContent, setNginxConfigOriginalContent] = useState('');
@@ -255,6 +259,8 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     setNginxConfigLoading(false);
     setNginxConfigSaving(false);
     setNginxConfigApplying(false);
+    setNginxConfigFilesLoading(false);
+    setNginxConfigFiles([]);
     setNginxConfigSourcePath('');
     setNginxConfigContent('');
     setNginxConfigOriginalContent('');
@@ -368,27 +374,70 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     void refreshNginxDetailStatus(service.id);
   };
 
-  const loadNginxConfigFile = useCallback(async (serviceId: string) => {
+  const loadNginxConfigFiles = useCallback(async (serviceId: string, preferredPath?: string) => {
+    setNginxConfigFilesLoading(true);
+    try {
+      const result = await listNginxServiceConfigFiles({ id: serviceId });
+      setNginxConfigFiles(result.files);
+      const normalizedPreferred = preferredPath?.trim();
+      if (normalizedPreferred) {
+        const matched = result.files.find((item) => item.source_path === normalizedPreferred);
+        if (matched) {
+          return matched.source_path;
+        }
+      }
+      if (result.main_source_path.trim()) {
+        return result.main_source_path.trim();
+      }
+      return result.files[0]?.source_path ?? null;
+    } catch (invokeError) {
+      setNginxConfigFiles([]);
+      setNginxMessage(`读取 nginx 配置文件列表失败：${formatInvokeError(invokeError)}`);
+      setNginxMessageIsError(true);
+      return preferredPath?.trim() || null;
+    } finally {
+      setNginxConfigFilesLoading(false);
+    }
+  }, []);
+
+  const loadNginxConfigFile = useCallback(async (serviceId: string, sourcePath?: string) => {
     setNginxConfigLoading(true);
     setNginxConfigValidationErrorDetail(null);
     setNginxMessage(null);
     setNginxMessageIsError(false);
     try {
-      const result = await readNginxServiceConfigFile({ id: serviceId });
+      const normalizedPath = sourcePath?.trim();
+      const result = await readNginxServiceConfigFile({
+        id: serviceId,
+        source_path: normalizedPath || undefined
+      });
       setNginxConfigSourcePath(result.source_path);
       setNginxConfigContent(result.content);
       setNginxConfigOriginalContent(result.content);
       setNginxConfigLoadedAt(result.loaded_at);
+      setNginxConfigFiles((previous) => {
+        if (previous.some((item) => item.source_path === result.source_path)) {
+          return previous;
+        }
+        return [...previous, { source_path: result.source_path, is_primary: false }];
+      });
       setNginxMessage(`已加载配置文件：${result.source_path}`);
       setNginxMessageIsError(false);
     } catch (invokeError) {
-      resetNginxConfigEditor();
       setNginxMessage(`读取 nginx 配置文件失败：${formatInvokeError(invokeError)}`);
       setNginxMessageIsError(true);
     } finally {
       setNginxConfigLoading(false);
     }
-  }, [resetNginxConfigEditor]);
+  }, []);
+
+  const openNginxConfigWorkspace = useCallback(
+    async (serviceId: string, preferredPath?: string) => {
+      const targetPath = await loadNginxConfigFiles(serviceId, preferredPath);
+      await loadNginxConfigFile(serviceId, targetPath ?? preferredPath);
+    },
+    [loadNginxConfigFile, loadNginxConfigFiles]
+  );
 
   const onOpenNginxConfig = useCallback(
     (service: NginxService, returnMode: 'list' | 'detail' = 'list') => {
@@ -398,9 +447,9 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
       setNginxMessage(null);
       setNginxMessageIsError(false);
       setNginxMode('config');
-      void loadNginxConfigFile(service.id);
+      void openNginxConfigWorkspace(service.id);
     },
-    [loadNginxConfigFile, resetNginxConfigEditor]
+    [openNginxConfigWorkspace, resetNginxConfigEditor]
   );
 
   const onBackNginxConfig = useCallback(() => {
@@ -776,8 +825,39 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     if (!selectedNginxConfigService) {
       return;
     }
-    await loadNginxConfigFile(selectedNginxConfigService.id);
-  }, [loadNginxConfigFile, selectedNginxConfigService]);
+    await openNginxConfigWorkspace(selectedNginxConfigService.id, nginxConfigSourcePath || undefined);
+  }, [nginxConfigSourcePath, openNginxConfigWorkspace, selectedNginxConfigService]);
+
+  const onSelectNginxConfigFile = useCallback(
+    async (sourcePath: string) => {
+      if (!selectedNginxConfigService) {
+        return;
+      }
+      const normalizedSourcePath = sourcePath.trim();
+      if (!normalizedSourcePath || normalizedSourcePath === nginxConfigSourcePath) {
+        return;
+      }
+      if (nginxConfigLoading || nginxConfigSaving || nginxConfigApplying || nginxConfigFilesLoading) {
+        return;
+      }
+      if (nginxConfigDirty) {
+        setNginxMessage('当前文件存在未保存修改，请先保存或还原后再切换。');
+        setNginxMessageIsError(true);
+        return;
+      }
+      await loadNginxConfigFile(selectedNginxConfigService.id, normalizedSourcePath);
+    },
+    [
+      loadNginxConfigFile,
+      nginxConfigApplying,
+      nginxConfigDirty,
+      nginxConfigFilesLoading,
+      nginxConfigLoading,
+      nginxConfigSaving,
+      nginxConfigSourcePath,
+      selectedNginxConfigService
+    ]
+  );
 
   const onSaveNginxConfigFile = useCallback(async () => {
     if (!selectedNginxConfigService) {
@@ -789,9 +869,11 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     setNginxMessage(null);
     setNginxMessageIsError(false);
     try {
+      const normalizedSourcePath = nginxConfigSourcePath.trim() || undefined;
       const validation = await validateNginxServiceConfigContent({
         id: selectedNginxConfigService.id,
-        content: nginxConfigContent
+        content: nginxConfigContent,
+        source_path: normalizedSourcePath
       });
       setNginxLastConfigTestResult(validation);
       if (!validation.success) {
@@ -807,11 +889,18 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
 
       const result = await saveNginxServiceConfigFile({
         id: selectedNginxConfigService.id,
-        content: nginxConfigContent
+        content: nginxConfigContent,
+        source_path: normalizedSourcePath
       });
       setNginxConfigSourcePath(result.source_path);
       setNginxConfigOriginalContent(nginxConfigContent);
       setNginxConfigLoadedAt(result.saved_at);
+      setNginxConfigFiles((previous) => {
+        if (previous.some((item) => item.source_path === result.source_path)) {
+          return previous;
+        }
+        return [...previous, { source_path: result.source_path, is_primary: false }];
+      });
       setNginxConfigValidationErrorDetail(null);
       setNginxMessage(`配置已保存：${result.source_path}（${result.bytes} bytes）`);
       setNginxMessageIsError(false);
@@ -825,7 +914,7 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     } finally {
       setNginxConfigSaving(false);
     }
-  }, [nginxConfigContent, selectedNginxConfigService, showNginxToast]);
+  }, [nginxConfigContent, nginxConfigSourcePath, selectedNginxConfigService, showNginxToast]);
 
   const onApplyNginxConfig = useCallback(async () => {
     if (!selectedNginxConfigService) {
@@ -891,7 +980,8 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
   const isDetailRunning = nginxDetailStatus?.running ?? false;
   const canDetailStart = !detailActionDisabled && !isDetailRunning;
   const canDetailStop = !detailActionDisabled && isDetailRunning;
-  const nginxConfigEditorBusy = nginxConfigLoading || nginxConfigSaving || nginxConfigApplying;
+  const nginxConfigEditorBusy =
+    nginxConfigLoading || nginxConfigSaving || nginxConfigApplying || nginxConfigFilesLoading;
 
   return {
     textInputProps,
@@ -909,6 +999,8 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     nginxConfigLoading,
     nginxConfigSaving,
     nginxConfigApplying,
+    nginxConfigFilesLoading,
+    nginxConfigFiles,
     nginxConfigEditorBusy,
     nginxConfigSourcePath,
     nginxConfigContent,
@@ -951,6 +1043,7 @@ export function useNginxServices(profiles: ConnectionProfile[]) {
     onSubmitDeployNginx,
     onTestNginxConfig,
     onReloadNginxConfigFile,
+    onSelectNginxConfigFile,
     onSaveNginxConfigFile,
     onApplyNginxConfig,
     onResetNginxConfigContent,

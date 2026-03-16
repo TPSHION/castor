@@ -501,17 +501,52 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
                   <header className="host-card-header">
                     <div>
                       <h3>配置文件编辑器</h3>
-                      <p>Monaco 编辑器，支持行号、Ctrl/Cmd+S 保存</p>
+                      <p>Monaco 编辑器，支持行号、Ctrl/Cmd+S 保存，可切换子配置文件</p>
                     </div>
                   </header>
-                  <Suspense fallback={<div className="nginx-config-editor-loading">编辑器加载中...</div>}>
-                    <NginxConfigEditor
-                      value={vm.nginxConfigContent}
-                      busy={vm.nginxConfigEditorBusy}
-                      loading={vm.nginxConfigLoading}
-                      onChange={vm.setNginxConfigContent}
-                    />
-                  </Suspense>
+                  <div className="nginx-config-workspace">
+                    <aside className="nginx-config-file-list">
+                      <div className="nginx-config-file-list-header">
+                        <strong>配置文件列表</strong>
+                        <span>{vm.nginxConfigFiles.length} 个文件</span>
+                      </div>
+                      {vm.nginxConfigFilesLoading ? (
+                        <p className="nginx-config-file-list-empty">正在读取文件列表...</p>
+                      ) : vm.nginxConfigFiles.length === 0 ? (
+                        <p className="nginx-config-file-list-empty">暂无可编辑的配置文件</p>
+                      ) : (
+                        <div className="nginx-config-file-list-body">
+                          {vm.nginxConfigFiles.map((file) => (
+                            <button
+                              key={file.source_path}
+                              type="button"
+                              className={
+                                file.source_path === vm.nginxConfigSourcePath
+                                  ? 'nginx-config-file-item active'
+                                  : 'nginx-config-file-item'
+                              }
+                              onClick={() => void vm.onSelectNginxConfigFile(file.source_path)}
+                              disabled={vm.nginxConfigEditorBusy}
+                              title={file.source_path}
+                            >
+                              <span className="nginx-config-file-path">{file.source_path}</span>
+                              {file.is_primary && <span className="nginx-config-file-tag">主配置</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </aside>
+                    <div className="nginx-config-editor-pane">
+                      <Suspense fallback={<div className="nginx-config-editor-loading">编辑器加载中...</div>}>
+                        <NginxConfigEditor
+                          value={vm.nginxConfigContent}
+                          busy={vm.nginxConfigEditorBusy}
+                          loading={vm.nginxConfigLoading}
+                          onChange={vm.setNginxConfigContent}
+                        />
+                      </Suspense>
+                    </div>
+                  </div>
                 </article>
               </div>
             )}

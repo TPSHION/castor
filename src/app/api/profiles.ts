@@ -17,9 +17,11 @@ import type {
   GetSystemdDeployServiceStatusRequest,
   ImportNginxServiceByParamsRequest,
   ListRemoteSystemdServicesRequest,
+  ListNginxServiceConfigFilesRequest,
   NginxConfigTestResult,
   NginxConfigValidationResult,
   NginxParsedConfigResult,
+  NginxServiceConfigFileListResult,
   NginxService,
   NginxServiceActionResult,
   NginxServiceConfigFileResult,
@@ -166,6 +168,13 @@ export function testNginxServiceConfig(request: TestNginxServiceConfigRequest) {
 export function parseNginxServiceConfig(request: ParseNginxServiceConfigRequest) {
   return invokeTauriWithRequest<NginxParsedConfigResult, ParseNginxServiceConfigRequest>(
     'parse_nginx_service_config',
+    request
+  );
+}
+
+export function listNginxServiceConfigFiles(request: ListNginxServiceConfigFilesRequest) {
+  return invokeTauriWithRequest<NginxServiceConfigFileListResult, ListNginxServiceConfigFilesRequest>(
+    'list_nginx_service_config_files',
     request
   );
 }

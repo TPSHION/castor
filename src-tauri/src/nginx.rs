@@ -106,8 +106,28 @@ pub struct ParseNginxServiceConfigRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ListNginxServiceConfigFilesRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NginxServiceConfigFileEntry {
+    pub source_path: String,
+    pub is_primary: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NginxServiceConfigFileListResult {
+    pub id: String,
+    pub main_source_path: String,
+    pub files: Vec<NginxServiceConfigFileEntry>,
+    pub loaded_at: u64,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ReadNginxServiceConfigFileRequest {
     pub id: String,
+    pub source_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -122,6 +142,7 @@ pub struct NginxServiceConfigFileResult {
 pub struct SaveNginxServiceConfigFileRequest {
     pub id: String,
     pub content: String,
+    pub source_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -136,6 +157,7 @@ pub struct NginxServiceConfigFileSaveResult {
 pub struct ValidateNginxServiceConfigContentRequest {
     pub id: String,
     pub content: String,
+    pub source_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -245,6 +267,7 @@ struct NginxConnectionKey {
 }
 
 const NGINX_DEPLOY_LOG_EVENT: &str = "nginx-deploy-log";
+const NGINX_CHILD_CONFIG_GLOB: &str = "/etc/nginx/conf.d/*.conf";
 
 pub fn list_nginx_services(app: &AppHandle) -> Result<Vec<NginxService>, String> {
     let mut services = load_nginx_services(app)?;
@@ -582,6 +605,34 @@ pub fn parse_nginx_service_config(
     })
 }
 
+pub fn list_nginx_service_config_files(
+    app: &AppHandle,
+    request: ListNginxServiceConfigFilesRequest,
+) -> Result<NginxServiceConfigFileListResult, String> {
+    let service = find_nginx_service_by_id(app, &request.id)?;
+    let profile = find_profile(app, &service.profile_id)?;
+
+    with_pooled_session(&profile, |session| {
+        let main_source_path = resolve_nginx_config_path(&service);
+        let raw_paths = list_nginx_config_file_paths(session, &service)?;
+        let normalized_paths = normalize_nginx_config_file_paths(&main_source_path, raw_paths);
+        let files = normalized_paths
+            .into_iter()
+            .map(|path| NginxServiceConfigFileEntry {
+                is_primary: path == main_source_path,
+                source_path: path,
+            })
+            .collect::<Vec<_>>();
+
+        Ok(NginxServiceConfigFileListResult {
+            id: service.id.clone(),
+            main_source_path,
+            files,
+            loaded_at: now_unix(),
+        })
+    })
+}
+
 pub fn read_nginx_service_config_file(
     app: &AppHandle,
     request: ReadNginxServiceConfigFileRequest,
@@ -590,7 +641,8 @@ pub fn read_nginx_service_config_file(
     let profile = find_profile(app, &service.profile_id)?;
 
     with_pooled_session(&profile, |session| {
-        let (source_path, content) = load_nginx_config_file_content(session, &service)?;
+        let (source_path, content) =
+            load_nginx_config_file_content(session, &service, request.source_path.as_deref())?;
         Ok(NginxServiceConfigFileResult {
             id: service.id.clone(),
             source_path,
@@ -608,8 +660,12 @@ pub fn save_nginx_service_config_file(
     let profile = find_profile(app, &service.profile_id)?;
 
     with_pooled_session(&profile, |session| {
-        let (source_path, bytes) =
-            save_nginx_config_file_content(session, &service, request.content.as_str())?;
+        let (source_path, bytes) = save_nginx_config_file_content(
+            session,
+            &service,
+            request.content.as_str(),
+            request.source_path.as_deref(),
+        )?;
         Ok(NginxServiceConfigFileSaveResult {
             id: service.id.clone(),
             source_path,
@@ -627,8 +683,12 @@ pub fn validate_nginx_service_config_content(
     let profile = find_profile(app, &service.profile_id)?;
 
     with_pooled_session(&profile, |session| {
-        let (stdout, stderr, exit_status) =
-            validate_nginx_config_file_content(session, &service, request.content.as_str())?;
+        let (stdout, stderr, exit_status) = validate_nginx_config_file_content(
+            session,
+            &service,
+            request.content.as_str(),
+            request.source_path.as_deref(),
+        )?;
         Ok(NginxConfigValidationResult {
             id: service.id.clone(),
             success: exit_status == 0,
@@ -685,11 +745,122 @@ fn resolve_nginx_config_path(service: &NginxService) -> String {
         .to_string()
 }
 
+fn resolve_nginx_config_target_path(
+    service: &NginxService,
+    source_path: Option<&str>,
+) -> Result<String, String> {
+    if let Some(path) = source_path {
+        let normalized = path.trim();
+        if normalized.is_empty() {
+            return Err("配置文件路径不能为空".to_string());
+        }
+        return Ok(normalized.to_string());
+    }
+    Ok(resolve_nginx_config_path(service))
+}
+
+fn normalize_nginx_config_file_paths(
+    main_source_path: &str,
+    raw_paths: Vec<String>,
+) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut normalized: Vec<String> = Vec::new();
+    let main = main_source_path.trim();
+    if !main.is_empty() {
+        seen.insert(main.to_string());
+        normalized.push(main.to_string());
+    }
+
+    for path in raw_paths {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let owned = trimmed.to_string();
+        if seen.insert(owned.clone()) {
+            normalized.push(owned);
+        }
+    }
+
+    normalized
+}
+
+fn list_nginx_config_file_paths(
+    session: &mut Session,
+    service: &NginxService,
+) -> Result<Vec<String>, String> {
+    let command_prefix = if service.use_sudo { "sudo " } else { "" };
+
+    let script = format!(
+        r#"set -euo pipefail
+echo "__CASTOR_CONF_LIST_BEGIN__"
+{command_prefix}sh -c 'for file in {child_glob}; do
+  if [ -f "$file" ]; then
+    printf "%s\n" "$file"
+  fi
+done'
+echo "__CASTOR_CONF_LIST_END__"
+"#,
+        command_prefix = command_prefix,
+        child_glob = NGINX_CHILD_CONFIG_GLOB,
+    );
+
+    let (stdout, stderr, exit_status) = run_remote_script(session, &script)?;
+    if exit_status != 0 {
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        return Err(format!(
+            "读取 nginx 配置文件列表失败 (exit code {exit_status}): {}",
+            if detail.is_empty() {
+                "unknown error"
+            } else {
+                detail
+            }
+        ));
+    }
+
+    let mut collecting = false;
+    let mut found_begin = false;
+    let mut found_end = false;
+    let mut files: Vec<String> = Vec::new();
+
+    for line in stdout.lines() {
+        if line == "__CASTOR_CONF_LIST_BEGIN__" {
+            collecting = true;
+            found_begin = true;
+            continue;
+        }
+        if line == "__CASTOR_CONF_LIST_END__" {
+            collecting = false;
+            found_end = true;
+            continue;
+        }
+        if !collecting {
+            continue;
+        }
+
+        let normalized = line.trim();
+        if !normalized.is_empty() {
+            files.push(normalized.to_string());
+        }
+    }
+
+    if !found_begin || !found_end {
+        return Err("读取 nginx 配置文件列表失败：未找到输出边界标记".to_string());
+    }
+
+    Ok(files)
+}
+
 fn load_nginx_config_file_content(
     session: &mut Session,
     service: &NginxService,
+    source_path: Option<&str>,
 ) -> Result<(String, String), String> {
-    let config_path = resolve_nginx_config_path(service);
+    let config_path = resolve_nginx_config_target_path(service, source_path)?;
     let command_prefix = if service.use_sudo { "sudo " } else { "" };
     let script = format!(
         r#"set -euo pipefail
@@ -760,8 +931,9 @@ fn save_nginx_config_file_content(
     session: &mut Session,
     service: &NginxService,
     content: &str,
+    source_path: Option<&str>,
 ) -> Result<(String, u64), String> {
-    let config_path = resolve_nginx_config_path(service);
+    let config_path = resolve_nginx_config_target_path(service, source_path)?;
     let command_prefix = if service.use_sudo { "sudo " } else { "" };
     let heredoc_marker = {
         let mut marker = format!("__CASTOR_NGINX_CONF_{}__", Uuid::new_v4().simple());
@@ -845,8 +1017,10 @@ fn validate_nginx_config_file_content(
     session: &mut Session,
     service: &NginxService,
     content: &str,
+    source_path: Option<&str>,
 ) -> Result<(String, String, i32), String> {
-    let config_path = resolve_nginx_config_path(service);
+    let main_config_path = resolve_nginx_config_path(service);
+    let target_config_path = resolve_nginx_config_target_path(service, source_path)?;
     let command_prefix = if service.use_sudo { "sudo " } else { "" };
     let nginx_bin = shell_quote(service.nginx_bin.as_str());
     let heredoc_marker = {
@@ -857,8 +1031,9 @@ fn validate_nginx_config_file_content(
         marker
     };
 
-    let script = format!(
-        r#"set -uo pipefail
+    if target_config_path == main_config_path {
+        let script = format!(
+            r#"set -euo pipefail
 nginx_bin={nginx_bin}
 conf_path={conf_path}
 conf_dir="$(dirname "$conf_path")"
@@ -874,10 +1049,61 @@ cat > "$tmp_file" <<'{heredoc_marker}'
 
 {command_prefix}"$nginx_bin" -t -c "$tmp_file" -p "$conf_dir"
 "#,
+            nginx_bin = nginx_bin,
+            conf_path = shell_quote(main_config_path.as_str()),
+            heredoc_marker = heredoc_marker,
+            content = content,
+            command_prefix = command_prefix,
+        );
+        return run_remote_script(session, &script);
+    }
+
+    let script = format!(
+        r#"set -euo pipefail
+nginx_bin={nginx_bin}
+main_conf_path={main_conf_path}
+main_conf_dir="$(dirname "$main_conf_path")"
+target_conf_path={target_conf_path}
+tmp_new="$(mktemp)"
+tmp_original="$(mktemp)"
+restore_needed=0
+cleanup() {{
+  if [ "$restore_needed" = "1" ]; then
+    if [ "{use_sudo}" = "1" ]; then
+      {command_prefix}tee "$target_conf_path" >/dev/null < "$tmp_original" || true
+    else
+      cat "$tmp_original" > "$target_conf_path" || true
+    fi
+  fi
+  rm -f "$tmp_new" "$tmp_original"
+}}
+trap cleanup EXIT
+
+cat > "$tmp_new" <<'{heredoc_marker}'
+{content}
+{heredoc_marker}
+
+if [ "{use_sudo}" = "1" ]; then
+  {command_prefix}cat "$target_conf_path" > "$tmp_original"
+else
+  cat "$target_conf_path" > "$tmp_original"
+fi
+
+restore_needed=1
+if [ "{use_sudo}" = "1" ]; then
+  {command_prefix}tee "$target_conf_path" >/dev/null < "$tmp_new"
+else
+  cat "$tmp_new" > "$target_conf_path"
+fi
+
+{command_prefix}"$nginx_bin" -t -c "$main_conf_path" -p "$main_conf_dir"
+"#,
         nginx_bin = nginx_bin,
-        conf_path = shell_quote(config_path.as_str()),
+        main_conf_path = shell_quote(main_config_path.as_str()),
+        target_conf_path = shell_quote(target_config_path.as_str()),
         heredoc_marker = heredoc_marker,
         content = content,
+        use_sudo = if service.use_sudo { "1" } else { "0" },
         command_prefix = command_prefix,
     );
 

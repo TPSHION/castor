@@ -32,6 +32,7 @@ use crate::nginx::{
     discover_remote_nginx as discover_remote_nginx_impl,
     get_nginx_service_status as get_nginx_service_status_impl,
     import_nginx_service_by_params as import_nginx_service_by_params_impl,
+    list_nginx_service_config_files as list_nginx_service_config_files_impl,
     list_nginx_services as list_nginx_services_impl,
     parse_nginx_service_config as parse_nginx_service_config_impl,
     read_nginx_service_config_file as read_nginx_service_config_file_impl,
@@ -41,8 +42,9 @@ use crate::nginx::{
     validate_nginx_service_config_content as validate_nginx_service_config_content_impl,
     ControlNginxServiceRequest, DeleteNginxServiceRequest, DeployNginxServiceRequest,
     DeployNginxServiceResult, DiscoverRemoteNginxRequest, GetNginxServiceStatusRequest,
-    ImportNginxServiceByParamsRequest, NginxConfigTestResult, NginxConfigValidationResult,
-    NginxParsedConfigResult, NginxService, NginxServiceActionResult, NginxServiceConfigFileResult,
+    ImportNginxServiceByParamsRequest, ListNginxServiceConfigFilesRequest, NginxConfigTestResult,
+    NginxConfigValidationResult, NginxParsedConfigResult, NginxService, NginxServiceActionResult,
+    NginxServiceConfigFileListResult, NginxServiceConfigFileResult,
     NginxServiceConfigFileSaveResult, NginxServiceStatus, ParseNginxServiceConfigRequest,
     ReadNginxServiceConfigFileRequest, RemoteNginxDiscoveryResult,
     SaveNginxServiceConfigFileRequest, TestNginxServiceConfigRequest, UpsertNginxServiceRequest,
@@ -751,6 +753,19 @@ pub async fn parse_nginx_service_config(
     })
     .await
     .map_err(|err| format!("failed to join nginx config parse task: {err}"))?
+}
+
+#[tauri::command]
+pub async fn list_nginx_service_config_files(
+    app: AppHandle,
+    request: ListNginxServiceConfigFilesRequest,
+) -> Result<NginxServiceConfigFileListResult, String> {
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        list_nginx_service_config_files_impl(&app_handle, request)
+    })
+    .await
+    .map_err(|err| format!("failed to join list nginx config files task: {err}"))?
 }
 
 #[tauri::command]

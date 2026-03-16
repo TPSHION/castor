@@ -29,6 +29,110 @@
   z-index: 3;
 }
 
+.nginx-config-workspace {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 10px;
+  min-height: 520px;
+}
+
+.nginx-config-file-list {
+  border: 1px solid #3f5377;
+  border-radius: 10px;
+  background: #151f34;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 520px;
+  overflow: hidden;
+}
+
+.nginx-config-file-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border-bottom: 1px solid #2f4366;
+  background: #18233a;
+}
+
+.nginx-config-file-list-header strong {
+  font-size: 0.8rem;
+  color: #dce8ff;
+}
+
+.nginx-config-file-list-header span {
+  font-size: 0.74rem;
+  color: #8fa8d1;
+}
+
+.nginx-config-file-list-body {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 8px;
+}
+
+.nginx-config-file-list-empty {
+  margin: 0;
+  padding: 10px;
+  color: #8fa8d1;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.nginx-config-file-item {
+  width: 100%;
+  border: 1px solid #395172;
+  border-radius: 8px;
+  background: #182741;
+  color: #cddbf4;
+  padding: 7px 8px;
+  text-align: left;
+  display: grid;
+  gap: 5px;
+}
+
+.nginx-config-file-item:hover:not(:disabled) {
+  border-color: #5a82ba;
+  background: #22385f;
+}
+
+.nginx-config-file-item.active {
+  border-color: #6ea0ea;
+  background: #284673;
+}
+
+.nginx-config-file-item:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.nginx-config-file-path {
+  display: block;
+  font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.73rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.nginx-config-file-tag {
+  justify-self: start;
+  border: 1px solid #4f73aa;
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 0.69rem;
+  line-height: 1.2;
+  color: #d6e5ff;
+  background: #1a2e4f;
+}
+
+.nginx-config-editor-pane {
+  min-width: 0;
+}
+
 .nginx-config-editor-loading {
   min-height: 520px;
   border: 1px solid #3f5377;
@@ -115,5 +219,15 @@
 @media (min-width: 901px) {
   .nginx-detail-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .nginx-config-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .nginx-config-file-list {
+    min-height: 220px;
   }
 }
