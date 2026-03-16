@@ -1,12 +1,14 @@
-.nginx-config-codemirror-shell {
+.nginx-config-monaco-shell {
   border: 1px solid #3f5377;
   border-radius: 10px;
   overflow: hidden;
   background: #121c31;
   min-height: 520px;
+  position: relative;
 }
 
-.nginx-config-codemirror-shell .cm-editor {
+.nginx-config-monaco-shell .monaco-editor,
+.nginx-config-monaco-shell .monaco-editor .overflow-guard {
   height: 520px;
   background: #121c31;
   color: #d5e4ff;
@@ -15,37 +17,16 @@
   line-height: 1.55;
 }
 
-.nginx-config-codemirror-shell .cm-focused {
-  outline: none;
-}
-
-.nginx-config-codemirror-shell .cm-scroller {
-  font-family: inherit;
-}
-
-.nginx-config-codemirror-shell .cm-gutters {
-  background: #10192d;
-  border-right: 1px solid #2f4366;
-  color: #6f87b3;
-  font-size: 0.76rem;
-  padding-right: 6px;
-}
-
-.nginx-config-codemirror-shell .cm-lineNumbers .cm-gutterElement {
-  padding: 0 4px 0 0;
-}
-
-.nginx-config-codemirror-shell .cm-content {
-  tab-size: 2;
-  caret-color: #d5e4ff;
-}
-
-.nginx-config-codemirror-shell .cm-selectionBackground {
-  background: rgb(95 147 221 / 32%);
-}
-
-.nginx-config-codemirror-shell .cm-placeholder {
+.nginx-config-monaco-placeholder {
+  position: absolute;
+  left: 58px;
+  top: 10px;
+  pointer-events: none;
   color: #7f94b9;
+  font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  z-index: 3;
 }
 
 .nginx-config-editor-loading {

@@ -501,7 +501,7 @@ export function NginxServicePanel({ profiles }: NginxServicePanelProps) {
                   <header className="host-card-header">
                     <div>
                       <h3>配置文件编辑器</h3>
-                      <p>CodeMirror 编辑器，支持行号、Ctrl/Cmd+S 保存</p>
+                      <p>Monaco 编辑器，支持行号、Ctrl/Cmd+S 保存</p>
                     </div>
                   </header>
                   <Suspense fallback={<div className="nginx-config-editor-loading">编辑器加载中...</div>}>
