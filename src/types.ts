@@ -762,6 +762,13 @@ export type ProxyNode = {
   method: string;
   password: string;
   plugin?: string;
+  sni?: string;
+  skip_cert_verify?: boolean;
+  network?: string;
+  ws_host?: string;
+  ws_path?: string;
+  grpc_service_name?: string;
+  alpn?: string[];
   supported: boolean;
   unsupported_reason?: string;
   raw_uri: string;

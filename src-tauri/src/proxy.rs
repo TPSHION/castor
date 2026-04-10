@@ -55,6 +55,13 @@ pub struct ProxyNode {
     pub method: String,
     pub password: String,
     pub plugin: Option<String>,
+    pub sni: Option<String>,
+    pub skip_cert_verify: Option<bool>,
+    pub network: Option<String>,
+    pub ws_host: Option<String>,
+    pub ws_path: Option<String>,
+    pub grpc_service_name: Option<String>,
+    pub alpn: Option<Vec<String>>,
     pub supported: bool,
     pub unsupported_reason: Option<String>,
     pub raw_uri: String,
@@ -1127,6 +1134,12 @@ fn parse_subscription_nodes(body: &str) -> Result<Vec<ProxyNode>, String> {
                 }
                 continue;
             }
+            if trimmed.starts_with("trojan://") {
+                if let Ok(node) = parse_trojan_node(trimmed) {
+                    nodes.push(node);
+                }
+                continue;
+            }
             if let Some(node) = parse_unsupported_node(trimmed) {
                 nodes.push(node);
             }
@@ -1223,6 +1236,13 @@ fn parse_ss_node(raw_uri: &str) -> Result<ProxyNode, String> {
         method,
         password,
         plugin,
+        sni: None,
+        skip_cert_verify: None,
+        network: None,
+        ws_host: None,
+        ws_path: None,
+        grpc_service_name: None,
+        alpn: None,
         supported,
         unsupported_reason,
         raw_uri: raw_uri.to_string(),
@@ -1279,8 +1299,145 @@ fn parse_vmess_node(raw_uri: &str) -> Result<ProxyNode, String> {
         method: "-".to_string(),
         password: "-".to_string(),
         plugin: None,
+        sni: None,
+        skip_cert_verify: None,
+        network: None,
+        ws_host: None,
+        ws_path: None,
+        grpc_service_name: None,
+        alpn: None,
         supported: false,
-        unsupported_reason: Some("当前仅支持 ss 节点自动部署，vmess 节点暂不支持。".to_string()),
+        unsupported_reason: Some("当前仅支持 ss、trojan 节点自动部署，vmess 节点暂不支持。".to_string()),
+        raw_uri: raw_uri.to_string(),
+        latency_ms: None,
+        reachability_status: None,
+        reachability_error: None,
+        tested_at: None,
+    })
+}
+
+fn parse_trojan_node(raw_uri: &str) -> Result<ProxyNode, String> {
+    let uri_without_scheme = raw_uri
+        .strip_prefix("trojan://")
+        .ok_or_else(|| "invalid trojan uri".to_string())?;
+    let (no_fragment, fragment) = split_once(uri_without_scheme, '#');
+    let (no_query, query) = split_once(no_fragment, '?');
+    let at_index = no_query
+        .rfind('@')
+        .ok_or_else(|| "invalid trojan uri".to_string())?;
+    let password = percent_decode(no_query[..at_index].trim());
+    if password.is_empty() {
+        return Err("invalid trojan password".to_string());
+    }
+    let host_part = &no_query[at_index + 1..];
+    let (server, port) = split_host_port(host_part)?;
+    let network = extract_query_param_keys(query, &["type", "network"])
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+    let security = extract_query_param(query, "security")
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+    let sni = extract_query_param_keys(query, &["sni", "peer"]).filter(|value| !value.trim().is_empty());
+    let ws_host =
+        extract_query_param_keys(query, &["host", "wsHost"]).filter(|value| !value.trim().is_empty());
+    let ws_path = extract_query_param(query, "path").filter(|value| !value.trim().is_empty());
+    let grpc_service_name =
+        extract_query_param_keys(query, &["serviceName", "grpc-service-name", "service_name"])
+            .filter(|value| !value.trim().is_empty());
+    let alpn = extract_query_param(query, "alpn").and_then(|value| {
+        let items = value
+            .split(',')
+            .map(|item| item.trim())
+            .filter(|item| !item.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            None
+        } else {
+            Some(items)
+        }
+    });
+    let skip_cert_verify = extract_query_bool(
+        query,
+        &["allowInsecure", "skip-cert-verify", "skip_verify", "insecure"],
+    );
+
+    let mut unsupported_reasons: Vec<String> = Vec::new();
+    if let Some(value) = security.as_deref() {
+        if value != "tls" {
+            unsupported_reasons.push(format!("security={value}"));
+        }
+    }
+    if let Some(value) = network.as_deref() {
+        match value {
+            "tcp" | "ws" | "grpc" => {}
+            _ => unsupported_reasons.push(format!("type={value}")),
+        }
+    }
+
+    let transport = network.clone().unwrap_or_else(|| "tcp".to_string());
+    let method = if transport == "tcp" {
+        "tls".to_string()
+    } else {
+        format!("tls/{transport}")
+    };
+    let mut plugin_parts = Vec::new();
+    if transport != "tcp" {
+        plugin_parts.push(transport.clone());
+    }
+    if let Some(value) = sni.as_deref() {
+        plugin_parts.push(format!("sni={value}"));
+    }
+    if let Some(value) = ws_host.as_deref() {
+        plugin_parts.push(format!("host={value}"));
+    }
+    if let Some(value) = ws_path.as_deref() {
+        plugin_parts.push(format!("path={value}"));
+    }
+    if let Some(value) = grpc_service_name.as_deref() {
+        plugin_parts.push(format!("grpc={value}"));
+    }
+    if skip_cert_verify == Some(true) {
+        plugin_parts.push("skip-cert-verify".to_string());
+    }
+    let plugin = if plugin_parts.is_empty() {
+        None
+    } else {
+        Some(plugin_parts.join("; "))
+    };
+
+    let supported = unsupported_reasons.is_empty();
+    let unsupported_reason = if supported {
+        None
+    } else {
+        Some(format!(
+            "当前暂不支持自动部署包含 {} 的 trojan 节点。",
+            unsupported_reasons.join(" / ")
+        ))
+    };
+    let suggested_name = fragment
+        .map(percent_decode)
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| format!("trojan-{server}:{port}"));
+
+    Ok(ProxyNode {
+        id: proxy_node_id(raw_uri),
+        name: suggested_name,
+        protocol: "trojan".to_string(),
+        server,
+        port,
+        method,
+        password,
+        plugin,
+        sni,
+        skip_cert_verify,
+        network,
+        ws_host,
+        ws_path,
+        grpc_service_name,
+        alpn,
+        supported,
+        unsupported_reason,
         raw_uri: raw_uri.to_string(),
         latency_ms: None,
         reachability_status: None,
@@ -1323,9 +1480,16 @@ fn parse_unsupported_node(raw_uri: &str) -> Option<ProxyNode> {
         method: "-".to_string(),
         password: "-".to_string(),
         plugin: None,
+        sni: None,
+        skip_cert_verify: None,
+        network: None,
+        ws_host: None,
+        ws_path: None,
+        grpc_service_name: None,
+        alpn: None,
         supported: false,
         unsupported_reason: Some(format!(
-            "当前仅支持 ss 节点自动部署，{} 节点暂不支持。",
+            "当前仅支持 ss、trojan 节点自动部署，{} 节点暂不支持。",
             normalized
         )),
         raw_uri: raw_uri.to_string(),
@@ -1532,6 +1696,24 @@ fn extract_query_param(query: Option<&str>, key: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn extract_query_param_keys(query: Option<&str>, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = extract_query_param(query, key) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn extract_query_bool(query: Option<&str>, keys: &[&str]) -> Option<bool> {
+    let raw = extract_query_param_keys(query, keys)?;
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 fn percent_decode(raw: &str) -> String {
@@ -2493,12 +2675,6 @@ fn build_mihomo_config_yaml(
         "log-level: warning".to_string(),
         "ipv6: true".to_string(),
         "proxies:".to_string(),
-        format!("  - name: {}", yaml_quote(proxy_name)),
-        "    type: ss".to_string(),
-        format!("    server: {}", yaml_quote(&node.server)),
-        format!("    port: {}", node.port),
-        format!("    cipher: {}", yaml_quote(&node.method)),
-        format!("    password: {}", yaml_quote(&node.password)),
         "proxy-groups:".to_string(),
         "  - name: \"PROXY\"".to_string(),
         "    type: select".to_string(),
@@ -2506,6 +2682,7 @@ fn build_mihomo_config_yaml(
         format!("      - {}", yaml_quote(proxy_name)),
         "rules:".to_string(),
     ];
+    lines.splice(6..6, build_mihomo_proxy_lines(node, proxy_name));
 
     lines.push(format!("  - {}", build_mihomo_direct_rule(node)));
     lines.push("  - \"MATCH,PROXY\"".to_string());
@@ -2530,6 +2707,80 @@ fn build_mihomo_config_yaml(
     }
 
     lines.join("\n")
+}
+
+fn build_mihomo_proxy_lines(node: &ProxyNode, proxy_name: &str) -> Vec<String> {
+    let protocol = normalize_protocol(&node.protocol);
+    let mut lines = vec![
+        format!("  - name: {}", yaml_quote(proxy_name)),
+        format!(
+            "    type: {}",
+            match protocol.as_str() {
+                "shadowsocks" => "ss",
+                "trojan" => "trojan",
+                _ => protocol.as_str(),
+            }
+        ),
+        format!("    server: {}", yaml_quote(&node.server)),
+        format!("    port: {}", node.port),
+    ];
+
+    match protocol.as_str() {
+        "trojan" => {
+            lines.push(format!("    password: {}", yaml_quote(&node.password)));
+            if let Some(value) = node.sni.as_deref().filter(|value| !value.trim().is_empty()) {
+                lines.push(format!("    sni: {}", yaml_quote(value)));
+            }
+            if node.skip_cert_verify.unwrap_or(false) {
+                lines.push("    skip-cert-verify: true".to_string());
+            }
+            if let Some(values) = node.alpn.as_ref().filter(|values| !values.is_empty()) {
+                lines.push("    alpn:".to_string());
+                for value in values {
+                    lines.push(format!("      - {}", yaml_quote(value)));
+                }
+            }
+
+            let network = node
+                .network
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("tcp")
+                .to_ascii_lowercase();
+            match network.as_str() {
+                "ws" => {
+                    lines.push("    network: ws".to_string());
+                    lines.push("    ws-opts:".to_string());
+                    if let Some(value) = node.ws_path.as_deref().filter(|value| !value.trim().is_empty()) {
+                        lines.push(format!("      path: {}", yaml_quote(value)));
+                    }
+                    if let Some(value) = node.ws_host.as_deref().filter(|value| !value.trim().is_empty()) {
+                        lines.push("      headers:".to_string());
+                        lines.push(format!("        Host: {}", yaml_quote(value)));
+                    }
+                }
+                "grpc" => {
+                    lines.push("    network: grpc".to_string());
+                    if let Some(value) = node
+                        .grpc_service_name
+                        .as_deref()
+                        .filter(|value| !value.trim().is_empty())
+                    {
+                        lines.push("    grpc-opts:".to_string());
+                        lines.push(format!("      grpc-service-name: {}", yaml_quote(value)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {
+            lines.push(format!("    cipher: {}", yaml_quote(&node.method)));
+            lines.push(format!("    password: {}", yaml_quote(&node.password)));
+        }
+    }
+
+    lines
 }
 
 fn build_mihomo_direct_rule(node: &ProxyNode) -> String {
